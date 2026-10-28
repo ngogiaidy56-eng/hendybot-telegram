@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { URL } from "node:url";
 
 function fail(message) {

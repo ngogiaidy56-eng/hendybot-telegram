@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "check": "node --check src/index.js && node --check src/server.js && node --check src/mini-app-html.js && node --check src/admin-html.js && node --check scripts/setup.js && node --check scripts/deploy-and-activate.js && node --check test/worker.test.js",
+    "check": "node --check src/index.js && node --check src/server.js && node --check src/webhook-automation.js && node --check src/mini-app-html.js && node --check src/admin-html.js && node --check scripts/setup.js && node --check scripts/deploy-and-activate.js && node --check test/worker.test.js && node --check test/webhook-automation.test.js",
     "test": "node --test",
     "build": "npm run check",
     "setup": "node scripts/setup.js",

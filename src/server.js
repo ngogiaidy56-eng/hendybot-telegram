@@ -1,5 +1,6 @@
 import express from "express";
 import http from "node:http";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { fileURLToPath } from "node:url";
 import { renderMiniAppHtml } from "./mini-app-html.js";
@@ -27,6 +28,56 @@ export function createServer(customEnv = process.env) {
   const app = express();
   const env = { ...process.env, ...customEnv };
   const config = getConfig(env);
+  const adminSessions = new Map();
+  const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+  const ADMIN_SESSION_COOKIE = "hendy_admin_session";
+
+  // Render terminates HTTPS at its proxy and forwards X-Forwarded-Proto.
+  app.set("trust proxy", 1);
+
+  function readCookie(cookieHeader, name) {
+    const prefix = name + "=";
+    for (const part of String(cookieHeader || "").split(";")) {
+      const entry = part.trim();
+      if (entry.startsWith(prefix)) return entry.slice(prefix.length);
+    }
+    return "";
+  }
+
+  function getAdminSessionId(req) {
+    const sessionId = readCookie(req.headers.cookie, ADMIN_SESSION_COOKIE);
+    const expiresAt = adminSessions.get(sessionId);
+    if (!sessionId || !expiresAt) return "";
+    if (expiresAt <= Date.now()) {
+      adminSessions.delete(sessionId);
+      return "";
+    }
+    return sessionId;
+  }
+
+  function validAdminSession(sessionId) {
+    const expiresAt = adminSessions.get(sessionId);
+    if (!sessionId || !expiresAt) return false;
+    if (expiresAt <= Date.now()) {
+      adminSessions.delete(sessionId);
+      return false;
+    }
+    return true;
+  }
+
+  function passwordsMatch(supplied, expected) {
+    if (typeof supplied !== "string" || typeof expected !== "string" || !expected) return false;
+    const a = Buffer.from(supplied);
+    const b = Buffer.from(expected);
+    return a.length === b.length && timingSafeEqual(a, b);
+  }
+
+  function writeSessionCookie(res, req, value, maxAgeSeconds) {
+    const secure = req.secure || env.NODE_ENV === "production" ? "; Secure" : "";
+    res.setHeader("Set-Cookie",
+      ADMIN_SESSION_COOKIE + "=" + value +
+      "; HttpOnly; SameSite=Strict; Path=/; Max-Age=" + maxAgeSeconds + secure);
+  }
 
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
@@ -35,6 +86,15 @@ export function createServer(customEnv = process.env) {
   function sendJson(res, data, status = 200) {
     res.status(status).setHeader("content-type", "application/json; charset=utf-8").json(data);
   }
+
+  // Render HTTP health check: must not depend on Telegram API uptime.
+  app.get("/healthz", (req, res) => {
+    return sendJson(res, {
+      service: "Hendy Telegram Bot",
+      status: "ok",
+      runtime: "Node.js + Express + WebSocket",
+    });
+  });
 
   // ------------------------------------------
   // 1. HEALTH & ROOT ENDPOINT (GET /)
@@ -45,7 +105,7 @@ export function createServer(customEnv = process.env) {
       return res.redirect("/admin");
     }
     return sendJson(res, {
-      service: "Hendy Telegram Bot (Express)",
+      service: "Hendy Telegram Bot",
       status: "ok",
       product: config.title,
       runtime: "Express.js + ws",
@@ -163,17 +223,22 @@ export function createServer(customEnv = process.env) {
     if (!env.BOT_TOKEN || !env.WEBHOOK_SECRET_TOKEN) {
       return sendJson(res, { ok: false, error: "Missing BOT_TOKEN or WEBHOOK_SECRET_TOKEN secret." }, 503);
     }
-    const host = req.get("host") || "";
-    const protocol = req.protocol || "http";
+    const configuredOrigin = env.PUBLIC_APP_URL || env.RENDER_EXTERNAL_URL ||
+      (env.RENDER_EXTERNAL_HOSTNAME ? "https://" + env.RENDER_EXTERNAL_HOSTNAME : "");
+    const requestOrigin = req.protocol + "://" + (req.get("host") || "");
     let base;
     try {
-      base = new URL(protocol + "://" + host);
+      base = new URL(configuredOrigin || requestOrigin);
     } catch {
-      return sendJson(res, { ok: false, error: "Invalid webhook origin." }, 400);
+      return sendJson(res, { ok: false, error: "Invalid public application URL." }, 400);
     }
-    if (base.protocol !== "https:" || !base.hostname || base.hostname === "localhost" ||
-        base.hostname.endsWith(".localhost") || base.hostname.endsWith(".local")) {
-      return sendJson(res, { ok: false, error: "Webhook requires a public HTTPS hostname." }, 400);
+    if (base.protocol !== "https:" || !base.hostname || base.username || base.password ||
+        base.hostname === "localhost" || base.hostname.endsWith(".localhost") ||
+        base.hostname.endsWith(".local")) {
+      return sendJson(res, { ok: false, error: "Webhook requires a configured public HTTPS URL." }, 400);
+    }
+    if (!/^[A-Za-z0-9_-]{1,256}$/.test(env.WEBHOOK_SECRET_TOKEN)) {
+      return sendJson(res, { ok: false, error: "WEBHOOK_SECRET_TOKEN must use A-Z, a-z, 0-9, underscore or hyphen (1-256 chars)." }, 400);
     }
     const webhookUrl = new URL("/webhook", base.origin).toString();
     const secret = env.WEBHOOK_SECRET_TOKEN;
@@ -233,6 +298,9 @@ export function createServer(customEnv = process.env) {
   // 5. WEBHOOK INFO (GET /webhook-info)
   // ------------------------------------------
   app.get("/webhook-info", async (req, res) => {
+    if (!env.WEBHOOK_SETUP_KEY || req.get("x-setup-key") !== env.WEBHOOK_SETUP_KEY) {
+      return sendJson(res, { ok: false, error: "Unauthorized." }, 401);
+    }
     if (!env.BOT_TOKEN) return sendJson(res, { error: "Missing BOT_TOKEN secret." }, 503);
     try {
       const response = await fetch("https://api.telegram.org/bot" + env.BOT_TOKEN + "/getWebhookInfo");
@@ -265,14 +333,41 @@ export function createServer(customEnv = process.env) {
   // ------------------------------------------
   // Xác thực đăng nhập Admin (POST /api/admin/auth)
   app.post("/api/admin/auth", (req, res) => {
-    const { password } = req.body || {};
     const expected = config.adminPassword;
-    if (expected && password === expected) {
-      addSystemLog("SUCCESS", "Admin xác thực đăng nhập thành công vào bảng điều khiển.");
-      return sendJson(res, { ok: true, adminId: config.adminId });
+    const supplied = req.body?.password;
+    if (!expected) {
+      return sendJson(res, { ok: false, error: "ADMIN_PASSWORD chưa được cấu hình trong Render Environment." }, 503);
     }
-    addSystemLog("WARN", "Cảnh báo: Đăng nhập quản trị thất bại (mật khẩu sai).");
-    return sendJson(res, { ok: false, error: "Mật khẩu quản trị không chính xác." }, 401);
+    if (!passwordsMatch(supplied, expected)) {
+      addSystemLog("WARN", "Cảnh báo: Đăng nhập quản trị thất bại (mật khẩu sai).");
+      return sendJson(res, { ok: false, error: "Mật khẩu quản trị không chính xác." }, 401);
+    }
+
+    const sessionId = randomBytes(32).toString("base64url");
+    const expiresAt = Date.now() + ADMIN_SESSION_TTL_MS;
+    adminSessions.set(sessionId, expiresAt);
+    for (const [key, expiry] of adminSessions) {
+      if (expiry <= Date.now()) adminSessions.delete(key);
+    }
+    writeSessionCookie(res, req, sessionId, Math.floor(ADMIN_SESSION_TTL_MS / 1000));
+    addSystemLog("SUCCESS", "Admin xác thực đăng nhập thành công vào bảng điều khiển.");
+    return sendJson(res, { ok: true, adminId: config.adminId });
+  });
+
+  app.post("/api/admin/logout", (req, res) => {
+    const sessionId = readCookie(req.headers.cookie, ADMIN_SESSION_COOKIE);
+    if (sessionId) adminSessions.delete(sessionId);
+    writeSessionCookie(res, req, "", 0);
+    return sendJson(res, { ok: true });
+  });
+
+  // Every admin API except login/logout requires a valid HttpOnly session cookie.
+  app.use("/api/admin", (req, res, next) => {
+    if (req.path === "/auth" || req.path === "/logout") return next();
+    if (!getAdminSessionId(req)) {
+      return sendJson(res, { ok: false, error: "Phiên quản trị đã hết hạn. Vui lòng đăng nhập lại." }, 401);
+    }
+    next();
   });
 
   // Xóa toàn bộ logs hệ thống (POST /api/admin/clear-logs)
@@ -471,6 +566,12 @@ export function createServer(customEnv = process.env) {
   const wss = new WebSocketServer({ server, path: "/ws" });
 
   wss.on("connection", (ws, req) => {
+    const sessionId = readCookie(req.headers.cookie, ADMIN_SESSION_COOKIE);
+    if (!validAdminSession(sessionId)) {
+      ws.close(1008, "Admin session required");
+      return;
+    }
+
     ACTIVE_WEBSOCKETS.add(ws);
     addSystemLog("INFO", "Client kết nối WebSocket mới vào máy chủ.");
 
@@ -487,11 +588,14 @@ export function createServer(customEnv = process.env) {
     } catch {}
 
     ws.on("message", async (message) => {
+      if (!validAdminSession(sessionId)) {
+        ws.close(1008, "Admin session expired");
+        return;
+      }
       try {
         const data = JSON.parse(message.toString());
         if (data.action === "AUTH") {
-          const expected = config.adminPassword;
-          if (expected && data.password === expected) {
+          if (validAdminSession(sessionId)) {
             const allUsers = await getAllUsers(env);
             ws.send(JSON.stringify({
               action: "AUTH_SUCCESS",
@@ -503,7 +607,8 @@ export function createServer(customEnv = process.env) {
             }));
             addSystemLog("INFO", "Admin xác thực WebSocket thành công.");
           } else {
-            ws.send(JSON.stringify({ action: "AUTH_FAIL", error: "Mật khẩu quản trị không chính xác." }));
+            ws.send(JSON.stringify({ action: "AUTH_FAIL", error: "Phiên quản trị không hợp lệ." }));
+            ws.close(1008, "Admin session invalid");
           }
         } else if (data.action === "GET_BALANCES") {
           const allUsers = await getAllUsers(env);

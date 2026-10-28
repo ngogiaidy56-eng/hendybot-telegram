@@ -7,7 +7,7 @@ services:
     plan: free
     region: singapore
     branch: main
-    autoDeployTrigger: checksPass
+    autoDeployTrigger: commit
     buildCommand: npm install && npm run check && npm test
     startCommand: npm start
     healthCheckPath: /healthz

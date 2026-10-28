@@ -184,7 +184,7 @@ test("unknown routes return 404", async () => {
   assert.equal(response.status, 404);
 });
 
-test("credentials are not defaulted or reused across purposes", () => {
+test("credentials are never supplied by source defaults or reused across purposes", () => {
   const config = getConfig({ WEBHOOK_SETUP_KEY: "setup-secret-test" });
   assert.equal(config.botToken, "");
   assert.equal(config.webhookSecret, "");

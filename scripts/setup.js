@@ -175,12 +175,20 @@ async function main() {
   const bot = await telegram("getMe", botToken);
   log(`✓ Đã xác minh bot @${bot.username || "telegram-bot"}.`);
 
-  // Triển khai trước để Cloudflare tạo script và workers.dev route.
-  // Không kiểm tra DNS trước lần deploy đầu tiên: hostname có thể chưa được cấp.
-  log("→ Đang triển khai Worker lên Cloudflare...");
-  await run(npx, ["wrangler", "deploy"]);
+  // Cloudflare Workers Builds có thể triển khai mã nguồn trước bước thiết lập webhook.
+  // Nếu chạy cục bộ, mặc định tự triển khai để tạo Worker/hostname lần đầu.
+  const skipInitialDeploy = ["1", "true", "yes"].includes(
+    String(process.env.SKIP_INITIAL_DEPLOY || "").toLowerCase(),
+  );
+  if (skipInitialDeploy) {
+    log("→ Chờ Cloudflare Workers Builds phát hành Worker trước khi cấu hình webhook...");
+  } else {
+    log("→ Đang triển khai Worker lần đầu để tạo script và hostname workers.dev...");
+    await run(npx, ["wrangler", "deploy"]);
+  }
 
-  // Chỉ tiếp tục khi DNS, HTTPS và health endpoint đều hoạt động.
+  // workers.dev có thể chưa tồn tại trước lần deploy đầu. Chỉ kiểm tra DNS sau deploy.
+  // Nếu URL không sẵn sàng thì tuyệt đối không gọi setWebhook.
   await waitForWorker(workerUrl, 24, 5000);
 
   const webhookSecret = (process.env.WEBHOOK_SECRET_TOKEN || generateSecret()).trim();
@@ -190,7 +198,7 @@ async function main() {
     fail("WEBHOOK_SECRET_TOKEN hoặc WEBHOOK_SETUP_KEY không đúng định dạng.");
   }
 
-  log("→ Đang cấu hình Cloudflare secrets. Giá trị bí mật sẽ không được in ra.");
+  log("→ Đang cấu hình 3 Cloudflare secrets. Giá trị bí mật sẽ không được in ra.");
   await setCloudflareSecret("BOT_TOKEN", botToken);
   await setCloudflareSecret("WEBHOOK_SECRET_TOKEN", webhookSecret);
   await setCloudflareSecret("WEBHOOK_SETUP_KEY", setupKey);
@@ -198,7 +206,7 @@ async function main() {
     await setCloudflareSecret("ADMIN_PASSWORD", process.env.ADMIN_PASSWORD);
   }
 
-  // wrangler secret put tạo version mới; xác minh Worker vẫn trả lời trước khi setWebhook.
+  // wrangler secret put tạo version mới; kiểm tra lại sau khi secrets đã được áp dụng.
   await waitForWorker(workerUrl, 6, 3000);
 
   log("→ Đang đăng ký webhook với Telegram...");

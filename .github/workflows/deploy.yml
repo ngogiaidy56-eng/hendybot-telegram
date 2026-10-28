@@ -1,4 +1,4 @@
-name: Test, deploy and activate Hendy Telegram Bot
+name: Test source and set up Hendy Telegram Bot
 
 on:
   push:

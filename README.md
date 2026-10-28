@@ -1,62 +1,79 @@
-# Hendy Cybertech Telegram Bot — Cloudflare Workers
+# Hendy Cybertech Telegram Bot — Render
 
-Telegram webhook bot built with JavaScript ES Modules. The Cloudflare Worker is the public HTTPS entry point and serves the admin and Mini App HTML routes (/admin and /mini-app). This repository deploys a **Worker** in the Cloudflare Workers & Pages dashboard; it is not a separate static Pages project.
+Telegram bot using Node.js, Express and WebSocket. Production runs as a Render **Web Service**; Cloudflare Workers/Wrangler are no longer required for deployment.
 
-## Cloudflare entry points
+## Render deployment (Blueprint)
 
-- **src/index.js** — Cloudflare Worker entry point and Telegram webhook handler.
-- **src/server.js** — optional Express/WebSocket server for local Node.js development; it is not the production Worker entry point.
-- **wrangler.toml** — Worker name, entry point, compatibility date and workers.dev routing.
-- **scripts/setup.js** — deploys the Worker, waits for DNS/HTTPS health, uploads secrets without printing them, then registers and verifies the Telegram webhook.
+1. Push or merge this branch into the repository's `main` branch.
+2. Open [Render Blueprint](https://dashboard.render.com/blueprint/new?repo=https%3A%2F%2Fgithub.com%2Fngogiaidy56-eng%2Fhendybot-telegram) and connect `ngogiaidy56-eng/hendybot-telegram`.
+3. Render reads `render.yaml`, installs dependencies, runs syntax checks/tests, then starts the service with `npm start`.
+4. During the first Blueprint setup, supply these secret values in Render. Never put them in source code, GitHub files, or chat messages:
+   - `BOT_TOKEN`: create/rotate the bot token using `@BotFather`. Any token ever committed to a repository must be revoked.
+   - `WEBHOOK_SECRET_TOKEN`: a long random value using only letters, numbers, underscore and hyphen (`A-Z a-z 0-9 _ -`); Telegram rejects other characters.
+   - `WEBHOOK_SETUP_KEY`: a different long random secret used only to authorize the setup endpoints.
+   - `ADMIN_PASSWORD`: a strong, separate admin-panel password.
+5. Wait until Render reports the deployment is live and `/healthz` returns HTTP 200. The service name and endpoint are configured by the Blueprint.
+6. In a secure terminal, set the public URL and the setup key, then register the webhook:
+   
+       APP_URL=https://<your-service>.onrender.com WEBHOOK_SETUP_KEY='<your-setup-key>' npm run setup
 
-The Cloudflare Worker name must match **hendybot-telegram**. WORKER_URL must be the exact HTTPS origin assigned to that Worker.
+   On PowerShell:
+   
+       $env:APP_URL = "https://<your-service>.onrender.com"
+       $env:WEBHOOK_SETUP_KEY = "<your-setup-key>"
+       npm run setup
 
-## Configure Cloudflare Workers & Pages
+The setup script first checks `/healthz`, sends a protected POST to `/auto-setup`, then calls the protected `/webhook-info` endpoint to verify the exact registered webhook URL. It does not print bot or setup secrets. The Render service itself reads `BOT_TOKEN` and `WEBHOOK_SECRET_TOKEN` from its own Environment settings.
 
-1. Open the [Cloudflare Workers & Pages dashboard](https://dash.cloudflare.com/) and select the hendybot-telegram Worker.
-2. Ensure the account's **workers.dev** domain is enabled. The configured default is https://hendybot-telegram.ngogiaidy56.workers.dev. If Cloudflare assigns a different URL, set the GitHub Actions variable WORKER_URL to that exact origin.
-3. The included GitHub Actions workflow is the deployment authority. After tests pass on main, it runs Wrangler to deploy the Worker, waits until DNS and HTTPS health checks succeed, injects secrets, and only then registers the Telegram webhook.
-4. If this Worker is connected to Cloudflare **Settings → Builds** with automatic production deployments, disable/disconnect that second deployment path when using the supplied GitHub Actions workflow. Do not run two independent production deployers against the same Worker. Wrangler configuration remains the source of truth.
+## Render configuration
 
-Cloudflare documentation: https://developers.cloudflare.com/workers/ci-cd/builds/configuration/
+- **Runtime:** Node.js
+- **Build command:** `npm install && npm run check && npm test`
+- **Start command:** `npm start`
+- **Health check:** `/healthz`
+- **Port:** reads Render's `PORT` value and binds to `0.0.0.0`
+- **Region:** Singapore
+- **Blueprint:** `render.yaml`
 
-## GitHub Actions secrets
+For an always-on production bot, change the Blueprint plan from `free` to `starter` (or select an appropriate paid plan) in line with Render's current pricing. Free instances may spin down during inactivity, so they are best for demos/tests.
 
-In GitHub, open **Settings → Secrets and variables → Actions** and add:
+## Admin security
 
-- **BOT_TOKEN** — a newly issued token from @BotFather.
-- **CLOUDFLARE_API_TOKEN** — API token with permissions to deploy Workers and manage Worker secrets in the target account.
-- **CLOUDFLARE_ACCOUNT_ID** — the Cloudflare account ID.
-- Optional **ADMIN_PASSWORD** — separate password for the admin panel; it is never printed in logs.
+- Admin login validates the `ADMIN_PASSWORD` environment variable.
+- A successful login sets an HttpOnly, SameSite cookie; the raw password is not embedded into the HTML or stored in browser storage.
+- Admin REST endpoints and WebSocket control connections require the authenticated session.
+- `/auto-setup`, `/set-webhook`, and `/webhook-info` require `x-setup-key`.
+- Configure a strong `WEBHOOK_SECRET_TOKEN` with only Telegram-supported characters.
 
-Set the Actions variable **WORKER_URL** only if the Worker URL differs from the default. The setup script generates WEBHOOK_SECRET_TOKEN and WEBHOOK_SETUP_KEY and writes them to Cloudflare Secrets. Never commit these values or put them into chat messages.
-
-**Security note:** a bot token was previously present in a tracked sample environment file. Revoke that token using @BotFather and put a newly issued token in GitHub Actions Secrets. Removing a token from the latest version does not erase it from Git history.
-
-## Local development and checks
+## Local development
 
 Use Node.js 22 or later.
 
     npm install
     npm run check
     npm test
-    npm run build
+    npm start
 
-To deploy manually, authenticate Wrangler for the intended Cloudflare account and provide the new token through an environment variable—not as a command-line argument.
+Copy `.env.example` to `.env` and fill in local values. Keep `.env` out of Git. For local testing, `PORT=3000` is fine; Render injects `PORT` automatically.
 
-    # Bash example only. Do not commit these values.
-    export BOT_TOKEN='PASTE_NEW_TOKEN_HERE'
-    export CLOUDFLARE_ACCOUNT_ID='YOUR_ACCOUNT_ID'
-    export CLOUDFLARE_API_TOKEN='YOUR_WORKERS_API_TOKEN'
-    npm run setup
+## Health and application routes
 
-The setup process deploys first, then retries DNS/HTTPS and the JSON health endpoint. It stops without calling Telegram's setWebhook if the Worker URL is not healthy.
+- `GET /`: JSON health summary or redirects browsers to `/admin`
+- `GET /healthz`: Render health check
+- `POST /webhook`: Telegram update receiver protected by `WEBHOOK_SECRET_TOKEN`
+- `POST /auto-setup`: authorized webhook registration and bot command setup
+- `GET /webhook-info`: authorized webhook status
+- `GET /admin`: admin panel
+- `GET /mini-app`: Telegram Mini App
+- `/ws`: authenticated admin WebSocket
 
-## Verify after deployment
+## Persistence note
 
-- Open WORKER_URL in a browser or run: curl -H 'Accept: application/json' "$WORKER_URL"
-- Confirm the JSON reports service "Hendy Telegram Bot" and status "ok".
-- Open the bot in Telegram and send /start.
-- Check webhook status from a secure terminal using the protected /webhook-info endpoint or Telegram Bot API. Do not paste tokens or setup keys into support messages.
+The current application store uses process memory unless a persistent backend is configured. Render redeploys/restarts can clear in-memory user balances, linked-account state and logs. Treat this deployment as a functional starting point, not a durable wallet/account database. Before storing real balances or customer credentials in production, connect a persistent database (for example, Render Postgres) and migrate the user/state store to it.
 
-Do not call webhook setup through an unauthenticated GET request. Setup requires POST and the x-setup-key header.
+## Documentation
+
+- Render web services: https://render.com/docs/web-services
+- Render Blueprints: https://render.com/docs/blueprint-spec
+- Render health checks: https://render.com/docs/health-checks
+- Render environment variables: https://render.com/docs/configure-environment-variables

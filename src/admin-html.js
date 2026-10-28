@@ -1,6 +1,5 @@
 export function renderAdminPortalHtml(config, stats = {}) {
   const adminId = config.adminId || "8639286417";
-  const defaultPass = config.adminPassword || "hendy2026";
 
   return `<!DOCTYPE html>
 <html lang="vi">
@@ -368,7 +367,7 @@ export function renderAdminPortalHtml(config, stats = {}) {
         </button>
 
         <p style="font-size: 11px; color: #64748b; margin-top: 16px;">
-          Gợi ý thiết lập mặc định: <code>${defaultPass}</code>
+          Mật khẩu quản trị được cấu hình riêng trong Render Environment (ADMIN_PASSWORD).
         </p>
       </form>
     </div>
@@ -488,7 +487,7 @@ export function renderAdminPortalHtml(config, stats = {}) {
       </p>
       <div class="input-row">
         <input type="text" id="admin-worker-url" class="input-field" placeholder="Server URL (ví dụ: https://hendybot.workers.dev)" value="${config.siteUrl || ''}">
-        <input type="password" id="admin-bot-token" class="input-field" placeholder="Telegram BOT_TOKEN (để trống để sử dụng mặc định)">
+        <input type="password" id="admin-bot-token" class="input-field" placeholder="BOT_TOKEN override (để trống dùng secret trên Render)">
       </div>
       <div style="display: flex; gap: 10px; flex-wrap: wrap;">
         <button class="btn btn-success" onclick="callWebhookAction('setWebhook')">
@@ -552,7 +551,7 @@ export function renderAdminPortalHtml(config, stats = {}) {
 
   <script>
     const ADMIN_ID = "${adminId}";
-    const DEFAULT_PASS = "${defaultPass}";
+    const DEFAULT_PASS = "";
     let allUsers = [];
     let allLogs = [];
     let currentLogFilter = 'ALL';
@@ -568,21 +567,24 @@ export function renderAdminPortalHtml(config, stats = {}) {
     }
 
     function getStoredPassword() {
-      return sessionStorage.getItem('hendy_admin_pass') || localStorage.getItem('hendy_admin_pass');
+      return sessionStorage.getItem('hendy_admin_authenticated') || localStorage.getItem('hendy_admin_authenticated') || '';
     }
 
     function setStoredPassword(pass, remember) {
-      authenticatedPassword = pass;
-      sessionStorage.setItem('hendy_admin_pass', pass);
+      // Never store the raw password in browser storage; the HttpOnly cookie performs authentication.
+      authenticatedPassword = true;
+      sessionStorage.setItem('hendy_admin_authenticated', '1');
       if (remember) {
-        localStorage.setItem('hendy_admin_pass', pass);
+        localStorage.setItem('hendy_admin_authenticated', '1');
       } else {
-        localStorage.removeItem('hendy_admin_pass');
+        localStorage.removeItem('hendy_admin_authenticated');
       }
     }
 
     function clearStoredPassword() {
       authenticatedPassword = null;
+      sessionStorage.removeItem('hendy_admin_authenticated');
+      localStorage.removeItem('hendy_admin_authenticated');
       sessionStorage.removeItem('hendy_admin_pass');
       localStorage.removeItem('hendy_admin_pass');
     }
@@ -620,14 +622,8 @@ export function renderAdminPortalHtml(config, stats = {}) {
           errEl.style.display = 'block';
         }
       } catch (err) {
-        // Fallback check against default pass if offline/direct
-        if (pass === DEFAULT_PASS) {
-          setStoredPassword(pass, remember);
-          unlockAdminDashboard();
-        } else {
-          errEl.innerText = 'Lỗi xác thực: ' + err.message;
-          errEl.style.display = 'block';
-        }
+        errEl.innerText = 'Không thể xác thực với máy chủ: ' + err.message;
+        errEl.style.display = 'block';
       }
     }
 
@@ -639,7 +635,8 @@ export function renderAdminPortalHtml(config, stats = {}) {
       refreshAdminData();
     }
 
-    function handleAdminLogout() {
+    async function handleAdminLogout() {
+      try { await fetch('/api/admin/logout', { method: 'POST' }); } catch (e) {}
       clearStoredPassword();
       if (socket) {
         try { socket.close(); } catch (e) {}
@@ -667,9 +664,10 @@ export function renderAdminPortalHtml(config, stats = {}) {
       }
       if (reconnectTimer) clearTimeout(reconnectTimer);
 
-      const pass = getStoredPassword() || DEFAULT_PASS;
+      const pass = getStoredPassword() || '';
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = protocol + '//' + location.host + '/ws?token=' + encodeURIComponent(pass);
+      // Browser sends the same-origin HttpOnly session cookie during the WebSocket handshake.
+      const wsUrl = protocol + '//' + location.host + '/ws';
 
       updateWsBadge('connecting', 'WebSocket: Đang kết nối...');
 

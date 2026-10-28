@@ -49,6 +49,9 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       WORKER_URL: ${{ vars.WORKER_URL || 'https://hendybot-telegram.ngogiaidy56.workers.dev' }}
+      # Cloudflare Workers Builds publishes the source; this job waits for it and configures secrets/webhook.
+      SKIP_INITIAL_DEPLOY: "true"
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
 
     steps:
       - name: Checkout source

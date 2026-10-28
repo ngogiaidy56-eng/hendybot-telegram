@@ -86,3 +86,43 @@ The setup endpoints never return the webhook secret. Keep the setup key private.
 - Vietsub links are forwarded only when the backend URL is configured and responds successfully.
 - Admin actions compare the sender's Telegram ID against `ADMIN_ID`.
 - Telegram menu links must use valid HTTPS URLs.
+
+
+## Automatic secret generation and webhook activation
+
+The setup program creates a fresh `WEBHOOK_SECRET_TOKEN` and `WEBHOOK_SETUP_KEY` using Node.js cryptographic randomness, uploads them as Cloudflare Worker secrets, deploys the Worker, registers the Telegram webhook, and verifies the webhook status. Secret values are never printed or committed.
+
+### One-command setup (recommended)
+
+1. Revoke the previously exposed bot token in **@BotFather** and create a new token.
+2. Install Node.js 20+ and dependencies, then authenticate Wrangler with your Cloudflare account.
+3. Run:
+
+```bash
+npm install
+npx wrangler login
+npm run setup
+```
+
+The setup script asks for the new bot token with terminal input hidden. It validates the token via Telegram `getMe`, generates both secrets, stores all three with `wrangler secret put`, deploys, calls the protected `/set-webhook` endpoint, and verifies `/webhook-info`.
+
+If your Worker URL is different from the default, set `WORKER_URL` before running. It must be the HTTPS origin only (no path or query).
+
+**Windows PowerShell**
+```powershell
+$env:WORKER_URL = "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev"
+npm run setup
+```
+
+**Linux/macOS**
+```bash
+WORKER_URL="https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev" npm run setup
+```
+
+You can pass the token from a preconfigured environment variable instead of the hidden prompt by setting `BOT_TOKEN`. Avoid putting the literal token in shell command history or CI logs.
+
+The Cloudflare account must already be authenticated with Wrangler (`npx wrangler login`) and have permission to deploy this Worker and manage Worker secrets. The script intentionally does not attempt to invent or recover a BotFather token. If the script says the deployed Worker health check failed, correct `WORKER_URL` to match the URL shown by `npx wrangler deploy`, then run `npm run setup` again. Each new setup run rotates the webhook/setup secrets and registers the matching new webhook secret.
+
+### What cannot be done automatically
+
+A Worker cannot securely create or read back its own Cloudflare secret values from its request handler. This setup command must run locally or in a trusted deployment environment with Wrangler permissions. Keep the terminal and Cloudflare account secure.

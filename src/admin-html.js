@@ -574,6 +574,8 @@ export function renderAdminPortalHtml(config, stats = {}) {
       // Never store the raw password in browser storage; the HttpOnly cookie performs authentication.
       authenticatedPassword = true;
       sessionStorage.setItem('hendy_admin_authenticated', '1');
+      sessionStorage.removeItem('hendy_admin_pass');
+      localStorage.removeItem('hendy_admin_pass');
       if (remember) {
         localStorage.setItem('hendy_admin_authenticated', '1');
       } else {

@@ -1,19 +1,16 @@
-// Single safe entry point: the setup script validates DNS, deploy health and secrets
-// before it registers a Telegram webhook. Never embed credentials in this file.
+// Backwards-compatible entry point for older scripts; webhook setup is now Render-based.
 import { spawn } from "node:child_process";
 
 const isWindows = process.platform === "win32";
-const npm = isWindows ? "npm.cmd" : "npm";
-
-const child = spawn(npm, ["run", "setup"], {
+const node = process.execPath;
+const child = spawn(node, ["scripts/setup.js"], {
   stdio: "inherit",
-  shell: isWindows,
   windowsHide: true,
   env: process.env,
 });
 
 child.once("error", (error) => {
-  console.error("Không chạy được quy trình thiết lập:", error.message);
+  console.error("Không chạy được quy trình setup Render:", error.message);
   process.exitCode = 1;
 });
 

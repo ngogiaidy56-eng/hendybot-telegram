@@ -63,4 +63,4 @@ Bind the returned namespace ID with the HENDY_KV block in wrangler.toml, then de
 - `src/index.js`: Cloudflare Worker entry point, Telegram webhook routing, menu callbacks, and request flows.
 - `scripts/setup.js`: Node.js setup utility that generates webhook secrets, deploys, registers the webhook, and sets bot commands.
 - `test/worker.test.js`: built-in Node.js tests for routes, webhook validation, menu generation, and admin authorization.
-- `npm run build`: checks JavaScript syntax, runs tests, and performs a Wrangler dry-run bundle before deployment.
+- `npm run check`: checks JavaScript syntax. `npm test` runs unit tests. `npm run build` performs a Wrangler dry-run bundle. `npm run deploy` runs all checks before deployment.

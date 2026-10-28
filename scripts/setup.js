@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import { spawn } from "node:child_process";
 import { stdin, stdout } from "node:process";
 import { URL } from "node:url";
@@ -126,18 +127,24 @@ async function main() {
   }
 
   const workerUrl = validateWorkerUrl(process.env.WORKER_URL || WORKER_URL_DEFAULT);
-  let botToken = (process.env.BOT_TOKEN || process.argv[2] || "").trim();
+  let botToken = (process.env.BOT_TOKEN || "").trim();
 
   if (!botToken) {
     if (stdin.isTTY && typeof stdin.setRawMode === "function") {
       botToken = await readHidden("Nhập BOT_TOKEN mới từ @BotFather (ký tự sẽ không hiển thị): ");
     } else {
-      botToken = "8689114890:AAFBFM0rNtZWpOtAovIPHPVQTJVp0odU1DQ";
-      log("→ Không có terminal tương tác, sử dụng BOT_TOKEN mặc định.");
+      fail("Thiếu BOT_TOKEN. Hãy đặt GitHub Secret BOT_TOKEN hoặc biến môi trường BOT_TOKEN.");
     }
   }
   if (!validateBotToken(botToken)) {
     fail("BOT_TOKEN không đúng định dạng. Hãy tạo token mới bằng @BotFather và chạy lại.");
+  }
+
+  log("→ Đang kiểm tra DNS của hostname Worker trước khi triển khai...");
+  try {
+    await lookup(new URL(workerUrl).hostname);
+  } catch {
+    fail("Hostname Worker chưa phân giải DNS được. Dừng trước khi triển khai hoặc đăng ký webhook; kiểm tra Workers & Pages > Worker URL.");
   }
 
   log("→ Đang xác minh BOT_TOKEN với Telegram...");

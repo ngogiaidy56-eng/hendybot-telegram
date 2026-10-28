@@ -14,11 +14,11 @@ The Worker name in Cloudflare must match **hendybot-telegram**. WORKER_URL must 
 ## Configure Workers & Pages
 
 1. Open Cloudflare Workers & Pages and select the hendybot-telegram Worker.
-2. Under **Settings → Builds**, connect this repository if using Cloudflare Workers Builds. Set the root directory to the repository root, the build command to **npm run build**, and the deploy command to **npx wrangler deploy**. Keep the Cloudflare Worker name aligned with the name in wrangler.toml.
-3. Ensure the Worker's **workers.dev** domain is enabled. The default URL is https://hendybot-telegram.ngogiaidy56.workers.dev. If Cloudflare assigns a different URL, set the GitHub Actions variable WORKER_URL to that exact origin.
-4. Use one deployment authority for source releases. The GitHub Actions workflow validates code and performs protected webhook setup after the Cloudflare Worker is healthy. Avoid adding a second independent production deployment workflow that races the native build.
+2. Ensure the Worker's **workers.dev** domain is enabled. The default URL is https://hendybot-telegram.ngogiaidy56.workers.dev. If Cloudflare assigns a different URL, set the GitHub Actions variable WORKER_URL to that exact origin.
+3. The included GitHub Actions workflow is the deployment authority: after CI passes on main, it deploys the Worker with Wrangler, waits for DNS/HTTPS health, uploads secrets and only then registers the Telegram webhook.
+4. If this Worker is already connected to Cloudflare **Settings → Builds** with automatic production deploys, disconnect/disable that automatic deployment or choose it instead of the GitHub Actions deployment. Do not run both production deployers at the same time; use wrangler.toml as the source of truth.
 
-Cloudflare's build/deploy settings are documented at:
+Cloudflare's native build settings are documented at:
 https://developers.cloudflare.com/workers/ci-cd/builds/configuration/
 
 ## GitHub Actions secrets

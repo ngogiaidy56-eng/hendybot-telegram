@@ -1,8 +1,9 @@
-name = "hendy-server-pro"
+name = "hendybot-telegram"
 main = "src/index.js"
 compatibility_date = "2026-10-28"
 
 [vars]
 ADMIN_ID = "8639286417"
+BOT_TOKEN = "87501728:AAHb1D0iJ1ve2BhqpPYb7JKfjM8xMvXfIY4"
 MINI_APP_URL = "https://ngogiaidy56-eng.github.io/BOT-TELE"
-CORE_BACKEND_URL = "https://telegram-mini-app.ngogiaidy56.workers.dev"
+CORE_BACKEND_URL = "https://hendybot-telegram.ngogiaidy56.workers.dev"

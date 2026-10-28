@@ -167,6 +167,15 @@ async function main() {
     fail(`Đăng ký webhook thất bại: ${setupResult.error || setupResult.telegram || setupResponse.statusText || setupResponse.status}`);
   }
 
+  log("→ Đang đăng ký các lệnh /start, /help và /id trong Telegram...");
+  await telegram("setMyCommands", botToken, {
+    commands: [
+      { command: "start", description: "Mở menu chính" },
+      { command: "help", description: "Xem hướng dẫn sử dụng" },
+      { command: "id", description: "Xem Telegram ID của bạn" },
+    ],
+  });
+
   log("→ Đang xác minh webhook...");
   const infoResponse = await fetch(new URL("/webhook-info", workerUrl), {
     headers: { "x-setup-key": setupKey },

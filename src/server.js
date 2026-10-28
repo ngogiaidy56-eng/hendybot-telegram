@@ -284,11 +284,12 @@ export function createServer(customEnv = process.env) {
       });
       const cmdPayload = await cmdRes.json().catch(() => ({}));
 
-      const ok = Boolean(setPayload?.ok);
+      const ok = Boolean(setPayload?.ok && cmdPayload?.ok);
       if (ok) {
-        addSystemLog("SUCCESS", `Tự động kích hoạt Webhook thành công!`);
+        addSystemLog("SUCCESS", "Tự động kích hoạt webhook và đồng bộ lệnh bot thành công.");
       } else {
-        addSystemLog("ERROR", `Tự động kích hoạt Webhook thất bại: ${setPayload?.description || "Lỗi API"}`);
+        const reason = setPayload?.description || cmdPayload?.description || "Telegram API không xác nhận đầy đủ cấu hình.";
+        addSystemLog("ERROR", "Thiết lập webhook chưa hoàn tất: " + reason);
       }
 
       return sendJson(res, {

@@ -2,44 +2,182 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.js";
 
-const env = {};
 const ctx = { waitUntil() {} };
 
-test("root health endpoint returns service status", async () => {
-  const response = await worker.fetch(new Request("https://example.workers.dev/"), env, ctx);
+test("health endpoint returns service name and configured product", async () => {
+  const response = await worker.fetch(
+    new Request("https://example.workers.dev/"),
+    { BOT_TITLE: "HENDY GAME TOOL BOT" },
+    ctx,
+  );
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.service, "Hendy Telegram Bot");
   assert.equal(body.status, "ok");
+  assert.equal(body.product, "HENDY GAME TOOL BOT");
 });
 
-test("webhook setup is POST-only and protected", async () => {
-  const getResponse = await worker.fetch(new Request("https://example.workers.dev/set-webhook"), env, ctx);
+test("webhook setup is POST-only and protected by a setup key", async () => {
+  const env = { WEBHOOK_SETUP_KEY: "setup-test-key" };
+  const getResponse = await worker.fetch(
+    new Request("https://example.workers.dev/set-webhook"),
+    env,
+    ctx,
+  );
   assert.equal(getResponse.status, 405);
 
-  const postResponse = await worker.fetch(new Request("https://example.workers.dev/set-webhook", { method: "POST" }), env, ctx);
-  assert.equal(postResponse.status, 401);
+  const denied = await worker.fetch(
+    new Request("https://example.workers.dev/set-webhook", { method: "POST" }),
+    env,
+    ctx,
+  );
+  assert.equal(denied.status, 401);
+
+  const acceptedAuthButMissingBotSecrets = await worker.fetch(
+    new Request("https://example.workers.dev/set-webhook", {
+      method: "POST",
+      headers: { "x-setup-key": "setup-test-key" },
+    }),
+    env,
+    ctx,
+  );
+  assert.equal(acceptedAuthButMissingBotSecrets.status, 503);
 });
 
-test("webhook fails closed when secrets are missing", async () => {
-  const response = await worker.fetch(new Request("https://example.workers.dev/webhook", { method: "POST", body: "{}" }), env, ctx);
-  assert.equal(response.status, 503);
+test("webhook fails closed if webhook secrets are missing or mismatched", async () => {
+  const missing = await worker.fetch(
+    new Request("https://example.workers.dev/webhook", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }),
+    {},
+    ctx,
+  );
+  assert.equal(missing.status, 503);
+
+  const mismatched = await worker.fetch(
+    new Request("https://example.workers.dev/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "wrong",
+      },
+      body: "{}",
+    }),
+    { BOT_TOKEN: "123456:placeholder-token", WEBHOOK_SECRET_TOKEN: "expected-secret" },
+    ctx,
+  );
+  assert.equal(mismatched.status, 403);
 });
 
-test("webhook rejects a mismatched secret", async () => {
+test("valid /start webhook sends the JavaScript storefront menu", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const telegramCalls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    const payload = init.body ? JSON.parse(init.body) : {};
+    telegramCalls.push({ url, payload });
+    return new Response(JSON.stringify({ ok: true, result: { message_id: 55, username: "hendy_test_bot" } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const pending = [];
+  const testCtx = { waitUntil(promise) { pending.push(promise); } };
   const response = await worker.fetch(
     new Request("https://example.workers.dev/webhook", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": "wrong" },
-      body: "{}",
+      headers: {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "webhook-secret-test",
+      },
+      body: JSON.stringify({
+        update_id: 9001,
+        message: {
+          message_id: 1,
+          chat: { id: 777001 },
+          from: { id: 777001, first_name: "Tester" },
+          text: "/start",
+        },
+      }),
     }),
-    { BOT_TOKEN: "placeholder-token", WEBHOOK_SECRET_TOKEN: "expected-secret" },
-    ctx,
+    {
+      BOT_TOKEN: "123456:placeholder-token",
+      WEBHOOK_SECRET_TOKEN: "webhook-secret-test",
+      BOT_TITLE: "HENDY GAME TOOL BOT",
+      ADMIN_ID: "8639286417",
+    },
+    testCtx,
   );
-  assert.equal(response.status, 403);
+
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), "OK");
+  await Promise.all(pending);
+
+  const sendCall = telegramCalls.find((call) => call.url.endsWith("/sendMessage"));
+  assert.ok(sendCall, "Telegram sendMessage should be called");
+  assert.match(sendCall.payload.text, /HENDY GAME TOOL BOT/);
+  assert.match(sendCall.payload.text, /Tester/);
+  const buttons = sendCall.payload.reply_markup.inline_keyboard.flat();
+  assert.ok(buttons.some((button) => button.callback_data === "menu_minigame"));
+  assert.ok(buttons.some((button) => button.callback_data === "menu_tool_rental"));
+  assert.ok(buttons.some((button) => button.callback_data === "menu_deposit"));
+  assert.ok(buttons.some((button) => button.callback_data === "menu_giftcode"));
+});
+
+test("non-admin cannot open the admin command", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const sentPayloads = [];
+  globalThis.fetch = async (input, init = {}) => {
+    sentPayloads.push(JSON.parse(init.body || "{}"));
+    return new Response(JSON.stringify({ ok: true, result: { message_id: 99 } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const pending = [];
+  await worker.fetch(
+    new Request("https://example.workers.dev/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "admin-test-secret",
+      },
+      body: JSON.stringify({
+        update_id: 9002,
+        message: {
+          message_id: 2,
+          chat: { id: 777002 },
+          from: { id: 777002, first_name: "Normal User" },
+          text: "/admin",
+        },
+      }),
+    }),
+    {
+      BOT_TOKEN: "123456:placeholder-token",
+      WEBHOOK_SECRET_TOKEN: "admin-test-secret",
+      ADMIN_ID: "8639286417",
+    },
+    { waitUntil(promise) { pending.push(promise); } },
+  );
+  await Promise.all(pending);
+  assert.ok(sentPayloads.some((payload) => /không có quyền quản trị/i.test(payload.text || "")));
 });
 
 test("unknown routes return 404", async () => {
-  const response = await worker.fetch(new Request("https://example.workers.dev/nope"), env, ctx);
+  const response = await worker.fetch(
+    new Request("https://example.workers.dev/not-a-route"),
+    {},
+    ctx,
+  );
   assert.equal(response.status, 404);
 });

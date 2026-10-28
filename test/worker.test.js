@@ -624,6 +624,13 @@ test("express server handles secure webhook and WebSocket real-time balance stre
     server.close();
   });
 
+  // Render health endpoint stays independent from Telegram API availability.
+  const healthRes = await fetch(`${baseUrl}/healthz`);
+  assert.equal(healthRes.status, 200);
+  const healthJson = await healthRes.json();
+  assert.equal(healthJson.service, "Hendy Telegram Bot");
+  assert.equal(healthJson.status, "ok");
+
   // 1. Webhook endpoint rejects missing / invalid secret header
   const rejectedRes = await fetch(`${baseUrl}/webhook`, {
     method: "POST",

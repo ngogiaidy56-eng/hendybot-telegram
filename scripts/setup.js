@@ -1,247 +1,88 @@
-import { randomBytes } from "node:crypto";
-import { lookup } from "node:dns/promises";
-import { spawn } from "node:child_process";
-import { stdin, stdout } from "node:process";
 import { URL } from "node:url";
-
-const WORKER_URL_DEFAULT = "https://hendybot-telegram.ngogiaidy56.workers.dev";
-const isWindows = process.platform === "win32";
-const npx = isWindows ? "npx.cmd" : "npx";
-
-function log(message) {
-  stdout.write(message + "\n");
-}
 
 function fail(message) {
   throw new Error(message);
 }
 
-function generateSecret() {
-  // Telegram secret_token only permits letters, digits, underscore and hyphen.
-  return randomBytes(32).toString("base64url");
-}
+function getPublicUrl() {
+  const raw = (process.env.APP_URL || process.env.PUBLIC_APP_URL || process.env.RENDER_EXTERNAL_URL || "").trim();
+  if (!raw) {
+    fail("Thiếu APP_URL. Khi chạy ngoài Render, đặt APP_URL=https://<ten-service>.onrender.com.");
+  }
 
-function validateBotToken(token) {
-  return /^\d+:[A-Za-z0-9_-]{20,}$/.test(token);
-}
-
-function validateWorkerUrl(value) {
   let parsed;
   try {
-    parsed = new URL(value);
+    parsed = new URL(raw);
   } catch {
-    fail("WORKER_URL không phải URL hợp lệ.");
+    fail("APP_URL không phải URL hợp lệ.");
   }
-  if (parsed.protocol !== "https:" || !parsed.hostname) {
-    fail("WORKER_URL phải là một URL HTTPS hợp lệ.");
+
+  if (parsed.protocol !== "https:" || !parsed.hostname ||
+      parsed.username || parsed.password || parsed.search || parsed.hash ||
+      (parsed.pathname !== "/" && parsed.pathname !== "")) {
+    fail("APP_URL phải là HTTPS origin công khai, không chứa đường dẫn, query hoặc thông tin đăng nhập.");
   }
-  if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
-    fail("WORKER_URL chỉ được chứa origin, không thêm đường dẫn hay query.");
+
+  if (parsed.hostname === "localhost" || parsed.hostname.endsWith(".localhost") ||
+      parsed.hostname.endsWith(".local")) {
+    fail("APP_URL phải là hostname công khai.");
   }
   return parsed.origin;
 }
 
-async function readHidden(promptText) {
-  if (!stdin.isTTY || typeof stdin.setRawMode !== "function") {
-    fail("Không có terminal tương tác. Hãy đặt biến môi trường BOT_TOKEN trước khi chạy.");
-  }
-
-  return new Promise((resolve, reject) => {
-    let value = "";
-    const onData = (chunk) => {
-      for (const char of chunk.toString("utf8")) {
-        if (char === "\u0003") {
-          cleanup();
-          stdout.write("\n");
-          reject(new Error("Đã hủy thiết lập."));
-          return;
-        }
-        if (char === "\r" || char === "\n") {
-          cleanup();
-          stdout.write("\n");
-          resolve(value.trim());
-          return;
-        }
-        if (char === "\u007f" || char === "\b") {
-          value = value.slice(0, -1);
-        } else if (char >= " " && char !== "\u007f") {
-          value += char;
-        }
-      }
-    };
-
-    function cleanup() {
-      stdin.off("data", onData);
-      stdin.setRawMode(false);
-      stdin.pause();
-    }
-
-    stdout.write(promptText);
-    stdin.setEncoding("utf8");
-    stdin.setRawMode(true);
-    stdin.resume();
-    stdin.on("data", onData);
+async function requestJson(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    signal: AbortSignal.timeout(15000),
+    headers: { accept: "application/json", ...(options.headers || {}) },
   });
-}
-
-function run(command, args, input) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      stdio: ["pipe", "inherit", "inherit"],
-      shell: isWindows,
-      windowsHide: true,
-    });
-    child.stdin.on("error", () => {});
-    if (input === undefined) child.stdin.end();
-    else child.stdin.end(input + "\n");
-
-    child.once("error", (error) => reject(new Error(`Không chạy được lệnh ${command}: ${error.message}`)));
-    child.once("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`Lệnh ${command} ${args[0] || ""} thất bại (mã ${code}). Kiểm tra thông tin đăng nhập Cloudflare và thử lại.`));
-    });
-  });
-}
-
-async function telegram(method, botToken, payload) {
-  const response = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
-    method: payload ? "POST" : "GET",
-    headers: payload ? { "content-type": "application/json" } : undefined,
-    body: payload ? JSON.stringify(payload) : undefined,
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.ok) {
-    fail(`Telegram API ${method} thất bại: ${data.description || response.statusText || response.status}`);
-  }
-  return data.result;
-}
-
-async function setCloudflareSecret(name, value) {
-  log(`→ Đang cấu hình Cloudflare secret: ${name}`);
-  await run(npx, ["wrangler", "secret", "put", name], value);
-}
-
-async function waitForWorker(workerUrl, attempts, delayMs) {
-  const hostname = new URL(workerUrl).hostname;
-  let lastIssue = "DNS hoặc HTTPS chưa sẵn sàng";
-
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      await lookup(hostname);
-      const response = await fetch(workerUrl, {
-        method: "GET",
-        headers: { accept: "application/json" },
-        signal: AbortSignal.timeout(8000),
-      });
-      const health = await response.json().catch(() => ({}));
-      if (response.ok && health.service === "Hendy Telegram Bot" && health.status === "ok") {
-        log("✓ Worker đã phân giải DNS, phản hồi HTTPS và trả về health check hợp lệ.");
-        return health;
-      }
-      lastIssue = `Health check trả về HTTP ${response.status} hoặc dữ liệu không hợp lệ`;
-    } catch (error) {
-      lastIssue = error?.message || "DNS/HTTPS chưa sẵn sàng";
-    }
-
-    if (attempt < attempts) {
-      log(`  Đang chờ Worker sẵn sàng (${attempt}/${attempts})...`);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
-  }
-
-  fail(`Worker chưa sẵn sàng sau ${attempts} lần kiểm tra: ${lastIssue}. Không đăng ký webhook. Kiểm tra Workers & Pages > Worker URL và biến WORKER_URL.`);
+  const body = await response.json().catch(() => ({}));
+  return { response, body };
 }
 
 async function main() {
-  if (Number(process.versions.node.split(".")[0]) < 20) {
-    fail("Cần Node.js 20 trở lên.");
+  const appUrl = getPublicUrl();
+  const setupKey = (process.env.WEBHOOK_SETUP_KEY || "").trim();
+  if (!setupKey) {
+    fail("Thiếu WEBHOOK_SETUP_KEY. Lấy giá trị này từ Render Dashboard > Service > Environment.");
   }
 
-  const workerUrl = validateWorkerUrl(process.env.WORKER_URL || WORKER_URL_DEFAULT);
-  let botToken = (process.env.BOT_TOKEN || "").trim();
-
-  if (!botToken) {
-    if (stdin.isTTY && typeof stdin.setRawMode === "function") {
-      botToken = await readHidden("Nhập BOT_TOKEN mới từ @BotFather (ký tự sẽ không hiển thị): ");
-    } else {
-      fail("Thiếu BOT_TOKEN. Hãy đặt GitHub Secret BOT_TOKEN hoặc biến môi trường BOT_TOKEN.");
-    }
+  console.log("→ Kiểm tra sức khỏe dịch vụ Render...");
+  const health = await requestJson(new URL("/healthz", appUrl));
+  if (!health.response.ok || health.body.status !== "ok" ||
+      health.body.service !== "Hendy Telegram Bot") {
+    fail("Dịch vụ Render chưa khỏe mạnh. Kiểm tra deploy/logs và health check /healthz; webhook chưa được thay đổi.");
   }
-  if (!validateBotToken(botToken)) {
-    fail("BOT_TOKEN không đúng định dạng. Hãy tạo token mới bằng @BotFather và chạy lại.");
-  }
+  console.log("✓ Dịch vụ Render đã phản hồi health check hợp lệ.");
 
-  log("→ Đang xác minh BOT_TOKEN với Telegram...");
-  const bot = await telegram("getMe", botToken);
-  log(`✓ Đã xác minh bot @${bot.username || "telegram-bot"}.`);
-
-  // Triển khai trước để Cloudflare tạo script và workers.dev route.
-  // Không kiểm tra DNS trước lần deploy đầu tiên: hostname có thể chưa được cấp.
-  log("→ Đang triển khai Worker lên Cloudflare...");
-  await run(npx, ["wrangler", "deploy"]);
-
-  // Chỉ tiếp tục khi DNS, HTTPS và health endpoint đều hoạt động.
-  await waitForWorker(workerUrl, 24, 5000);
-
-  const webhookSecret = (process.env.WEBHOOK_SECRET_TOKEN || generateSecret()).trim();
-  const setupKey = (process.env.WEBHOOK_SETUP_KEY || generateSecret()).trim();
-  if (!/^[A-Za-z0-9_-]{1,256}$/.test(webhookSecret) ||
-      !/^[A-Za-z0-9_-]{1,256}$/.test(setupKey)) {
-    fail("WEBHOOK_SECRET_TOKEN hoặc WEBHOOK_SETUP_KEY không đúng định dạng.");
-  }
-
-  log("→ Đang cấu hình Cloudflare secrets. Giá trị bí mật sẽ không được in ra.");
-  await setCloudflareSecret("BOT_TOKEN", botToken);
-  await setCloudflareSecret("WEBHOOK_SECRET_TOKEN", webhookSecret);
-  await setCloudflareSecret("WEBHOOK_SETUP_KEY", setupKey);
-  if (process.env.ADMIN_PASSWORD) {
-    await setCloudflareSecret("ADMIN_PASSWORD", process.env.ADMIN_PASSWORD);
-  }
-
-  // wrangler secret put tạo version mới; xác minh Worker vẫn trả lời trước khi setWebhook.
-  await waitForWorker(workerUrl, 6, 3000);
-
-  log("→ Đang đăng ký webhook với Telegram...");
-  const setupResponse = await fetch(new URL("/set-webhook", workerUrl), {
+  console.log("→ Gửi yêu cầu đăng ký webhook có xác thực...");
+  const setup = await requestJson(new URL("/auto-setup", appUrl), {
     method: "POST",
-    headers: { "x-setup-key": setupKey },
+    headers: { "content-type": "application/json", "x-setup-key": setupKey },
+    body: JSON.stringify({}),
   });
-  const setupResult = await setupResponse.json().catch(() => ({}));
-  if (!setupResponse.ok || setupResult.ok !== true) {
-    fail(`Đăng ký webhook thất bại: ${setupResult.error || setupResult.telegram || setupResponse.statusText || setupResponse.status}`);
+  if (!setup.response.ok || setup.body.ok !== true) {
+    fail("Đăng ký webhook thất bại: " + (setup.body.error || setup.body.description || setup.response.statusText || setup.response.status));
   }
 
-  log("→ Đang đăng ký các lệnh /start, /help và /id trong Telegram...");
-  await telegram("setMyCommands", botToken, {
-    commands: [
-      { command: "start", description: "Mở menu chính" },
-      { command: "help", description: "Xem hướng dẫn sử dụng" },
-      { command: "id", description: "Xem Telegram ID của bạn" },
-      { command: "balance", description: "Xem số dư đang ghi nhận" },
-      { command: "admin", description: "Mở bảng quản trị (chỉ admin)" },
-    ],
-  });
-
-  log("→ Đang xác minh webhook...");
-  const infoResponse = await fetch(new URL("/webhook-info", workerUrl), {
+  console.log("→ Xác minh lại trạng thái webhook từ Telegram...");
+  const info = await requestJson(new URL("/webhook-info", appUrl), {
+    method: "GET",
     headers: { "x-setup-key": setupKey },
   });
-  const info = await infoResponse.json().catch(() => ({}));
-  if (!infoResponse.ok || info.ok !== true || !info.result?.url?.endsWith("/webhook")) {
-    fail(`Webhook chưa được xác minh: ${info.description || info.error || "Telegram không trả về URL webhook hợp lệ"}`);
+  const expectedUrl = new URL("/webhook", appUrl).toString();
+  if (!info.response.ok || info.body.ok !== true ||
+      !info.body.result || info.body.result.url !== expectedUrl) {
+    fail("Webhook chưa được xác minh đúng URL. Kiểm tra Render URL và Telegram webhook status.");
   }
 
-  log("");
-  log("✅ THIẾT LẬP HOÀN TẤT");
-  log(`Bot: @${bot.username || "telegram-bot"}`);
-  log(`Worker: ${workerUrl}`);
-  log(`Webhook: ${info.result.url}`);
-  log("Mở Telegram, vào bot và gửi /start để kiểm tra menu.");
-  log("Không chia sẻ BOT_TOKEN, WEBHOOK_SECRET_TOKEN hoặc WEBHOOK_SETUP_KEY.");
+  console.log("✅ Thiết lập hoàn tất.");
+  console.log("Service URL: " + appUrl);
+  console.log("Webhook URL: " + expectedUrl);
+  console.log("Không chia sẻ BOT_TOKEN, WEBHOOK_SECRET_TOKEN hoặc WEBHOOK_SETUP_KEY.");
 }
 
 main().catch((error) => {
-  console.error("\n❌ Thiết lập chưa hoàn tất:", error.message);
-  console.error("Không gửi token hoặc secret vào cuộc trò chuyện. Sửa cấu hình rồi chạy lại: npm run setup");
+  console.error("❌ Thiết lập chưa hoàn tất: " + error.message);
   process.exitCode = 1;
 });

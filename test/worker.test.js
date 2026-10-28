@@ -181,3 +181,174 @@ test("unknown routes return 404", async () => {
   );
   assert.equal(response.status, 404);
 });
+
+test("auto-setup endpoint registers webhook and commands", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    calls.push({ url, body: init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ ok: true, result: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const response = await worker.fetch(
+    new Request("https://hendybot.workers.dev/auto-setup", { method: "POST" }),
+    {
+      BOT_TOKEN: "123456:placeholder-token",
+      WEBHOOK_SECRET_TOKEN: "auto-secret-token",
+    },
+    ctx,
+  );
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.ok, true);
+  assert.equal(data.webhookUrl, "https://hendybot.workers.dev/webhook");
+  assert.ok(calls.some((c) => c.url.includes("setWebhook")));
+  assert.ok(calls.some((c) => c.url.includes("setMyCommands")));
+});
+
+test("account linking credentials text registers account with limit check", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const sent = [];
+  globalThis.fetch = async (input, init = {}) => {
+    sent.push({ url: String(input), body: init.body ? JSON.parse(init.body) : {} });
+    return new Response(JSON.stringify({ ok: true, result: { message_id: 111 } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const pending = [];
+  const testCtx = { waitUntil(p) { pending.push(p); } };
+
+  // Send account line
+  await worker.fetch(
+    new Request("https://example.workers.dev/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "secret123",
+      },
+      body: JSON.stringify({
+        update_id: 10001,
+        message: {
+          message_id: 101,
+          chat: { id: 888111 },
+          from: { id: 888111, first_name: "GamerPro" },
+          text: "player1 | pass123 | MINI_CODE_1 | SC88",
+        },
+      }),
+    }),
+    {
+      BOT_TOKEN: "123456:placeholder-token",
+      WEBHOOK_SECRET_TOKEN: "secret123",
+    },
+    testCtx,
+  );
+  await Promise.all(pending);
+
+  const sendCall = sent.find((c) => c.url.endsWith("/sendMessage"));
+  assert.ok(sendCall, "Should send response confirmation");
+  assert.match(sendCall.body.text, /Chốt đơn 1 acc/i);
+  assert.match(sendCall.body.text, /player1/);
+  assert.match(sendCall.body.text, /SC88/);
+});
+
+test("deposit amount produces automatic VietQR response", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const sent = [];
+  globalThis.fetch = async (input, init = {}) => {
+    sent.push({ url: String(input), body: init.body ? JSON.parse(init.body) : {} });
+    return new Response(JSON.stringify({ ok: true, result: { message_id: 222 } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const pending = [];
+  const testCtx = { waitUntil(p) { pending.push(p); } };
+  const env = {
+    BOT_TOKEN: "123456:placeholder-token",
+    WEBHOOK_SECRET_TOKEN: "secret123",
+  };
+
+  // 1. User clicks deposit button
+  await worker.fetch(
+    new Request("https://example.workers.dev/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "secret123",
+      },
+      body: JSON.stringify({
+        update_id: 10002,
+        callback_query: {
+          id: "cb_dep_1",
+          from: { id: 888222, first_name: "Buyer" },
+          message: { message_id: 50, chat: { id: 888222 } },
+          data: "deposit",
+        },
+      }),
+    }),
+    env,
+    testCtx,
+  );
+  await Promise.all(pending);
+
+  // 2. User sends 50000 VND
+  await worker.fetch(
+    new Request("https://example.workers.dev/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "secret123",
+      },
+      body: JSON.stringify({
+        update_id: 10003,
+        message: {
+          message_id: 51,
+          chat: { id: 888222 },
+          from: { id: 888222, first_name: "Buyer" },
+          text: "50000",
+        },
+      }),
+    }),
+    env,
+    testCtx,
+  );
+  await Promise.all(pending);
+
+  const photoCall = sent.find((c) => c.url.endsWith("/sendPhoto"));
+  assert.ok(photoCall, "Should call sendPhoto with VietQR");
+  assert.match(photoCall.body.photo, /vietqr\.io/);
+  assert.match(photoCall.body.photo, /50000/);
+  assert.match(photoCall.body.caption, /HENDY888222/);
+});
+
+test("websocket endpoint /ws responds with server status", async () => {
+  const response = await worker.fetch(
+    new Request("https://example.workers.dev/ws"),
+    { WS_PORT: 3000 },
+    ctx,
+  );
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.service, "Hendy WebSocket Server");
+  assert.equal(data.status, "ready");
+  assert.ok(data.brands);
+  assert.ok(data.brands.SC88);
+});
+
+

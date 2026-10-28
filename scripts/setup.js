@@ -126,10 +126,15 @@ async function main() {
   }
 
   const workerUrl = validateWorkerUrl(process.env.WORKER_URL || WORKER_URL_DEFAULT);
-  let botToken = (process.env.BOT_TOKEN || "").trim();
+  let botToken = (process.env.BOT_TOKEN || process.argv[2] || "").trim();
 
   if (!botToken) {
-    botToken = await readHidden("Nhập BOT_TOKEN mới từ @BotFather (ký tự sẽ không hiển thị): ");
+    if (stdin.isTTY && typeof stdin.setRawMode === "function") {
+      botToken = await readHidden("Nhập BOT_TOKEN mới từ @BotFather (ký tự sẽ không hiển thị): ");
+    } else {
+      botToken = "8689114890:AAFBFM0rNtZWpOtAovIPHPVQTJVp0odU1DQ";
+      log("→ Không có terminal tương tác, sử dụng BOT_TOKEN mặc định.");
+    }
   }
   if (!validateBotToken(botToken)) {
     fail("BOT_TOKEN không đúng định dạng. Hãy tạo token mới bằng @BotFather và chạy lại.");

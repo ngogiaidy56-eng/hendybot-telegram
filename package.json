@@ -10,7 +10,8 @@
     "test": "node --test",
     "build": "wrangler deploy --dry-run",
     "deploy": "npm run check && npm test && npm run build && wrangler deploy",
-    "setup": "node scripts/setup.js"
+    "setup": "node scripts/setup.js",
+    "auto-setup": "node scripts/setup.js"
   },
   "devDependencies": {
     "wrangler": "^4.154.0"

@@ -121,6 +121,37 @@ async function setCloudflareSecret(name, value) {
   await run(npx, ["wrangler", "secret", "put", name], value);
 }
 
+async function waitForWorker(workerUrl, attempts, delayMs) {
+  const hostname = new URL(workerUrl).hostname;
+  let lastIssue = "DNS hoặc HTTPS chưa sẵn sàng";
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await lookup(hostname);
+      const response = await fetch(workerUrl, {
+        method: "GET",
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(8000),
+      });
+      const health = await response.json().catch(() => ({}));
+      if (response.ok && health.service === "Hendy Telegram Bot" && health.status === "ok") {
+        log("✓ Worker đã phân giải DNS, phản hồi HTTPS và trả về health check hợp lệ.");
+        return health;
+      }
+      lastIssue = `Health check trả về HTTP ${response.status} hoặc dữ liệu không hợp lệ`;
+    } catch (error) {
+      lastIssue = error?.message || "DNS/HTTPS chưa sẵn sàng";
+    }
+
+    if (attempt < attempts) {
+      log(`  Đang chờ Worker sẵn sàng (${attempt}/${attempts})...`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  fail(`Worker chưa sẵn sàng sau ${attempts} lần kiểm tra: ${lastIssue}. Không đăng ký webhook. Kiểm tra Workers & Pages > Worker URL và biến WORKER_URL.`);
+}
+
 async function main() {
   if (Number(process.versions.node.split(".")[0]) < 20) {
     fail("Cần Node.js 20 trở lên.");
@@ -140,34 +171,35 @@ async function main() {
     fail("BOT_TOKEN không đúng định dạng. Hãy tạo token mới bằng @BotFather và chạy lại.");
   }
 
-  log("→ Đang kiểm tra DNS của hostname Worker trước khi triển khai...");
-  try {
-    await lookup(new URL(workerUrl).hostname);
-  } catch {
-    fail("Hostname Worker chưa phân giải DNS được. Dừng trước khi triển khai hoặc đăng ký webhook; kiểm tra Workers & Pages > Worker URL.");
-  }
-
   log("→ Đang xác minh BOT_TOKEN với Telegram...");
   const bot = await telegram("getMe", botToken);
   log(`✓ Đã xác minh bot @${bot.username || "telegram-bot"}.`);
 
-  const webhookSecret = generateSecret();
-  const setupKey = generateSecret();
+  // Triển khai trước để Cloudflare tạo script và workers.dev route.
+  // Không kiểm tra DNS trước lần deploy đầu tiên: hostname có thể chưa được cấp.
+  log("→ Đang triển khai Worker lên Cloudflare...");
+  await run(npx, ["wrangler", "deploy"]);
 
-  log("→ Đang tải 3 secrets lên Cloudflare. Giá trị bí mật sẽ không được in ra.");
+  // Chỉ tiếp tục khi DNS, HTTPS và health endpoint đều hoạt động.
+  await waitForWorker(workerUrl, 24, 5000);
+
+  const webhookSecret = (process.env.WEBHOOK_SECRET_TOKEN || generateSecret()).trim();
+  const setupKey = (process.env.WEBHOOK_SETUP_KEY || generateSecret()).trim();
+  if (!/^[A-Za-z0-9_-]{1,256}$/.test(webhookSecret) ||
+      !/^[A-Za-z0-9_-]{1,256}$/.test(setupKey)) {
+    fail("WEBHOOK_SECRET_TOKEN hoặc WEBHOOK_SETUP_KEY không đúng định dạng.");
+  }
+
+  log("→ Đang cấu hình Cloudflare secrets. Giá trị bí mật sẽ không được in ra.");
   await setCloudflareSecret("BOT_TOKEN", botToken);
   await setCloudflareSecret("WEBHOOK_SECRET_TOKEN", webhookSecret);
   await setCloudflareSecret("WEBHOOK_SETUP_KEY", setupKey);
-
-  log("→ Đang triển khai Worker...");
-  await run(npx, ["wrangler", "deploy"]);
-
-  log("→ Đang kiểm tra Worker đã phát hành...");
-  const healthResponse = await fetch(workerUrl, { method: "GET" });
-  const health = await healthResponse.json().catch(() => ({}));
-  if (!healthResponse.ok || health.service !== "Hendy Telegram Bot" || health.status !== "ok") {
-    fail(`Worker chưa phản hồi đúng tại ${workerUrl}. Hãy xác nhận WORKER_URL trùng với URL được Wrangler cấp rồi chạy lại.`);
+  if (process.env.ADMIN_PASSWORD) {
+    await setCloudflareSecret("ADMIN_PASSWORD", process.env.ADMIN_PASSWORD);
   }
+
+  // wrangler secret put tạo version mới; xác minh Worker vẫn trả lời trước khi setWebhook.
+  await waitForWorker(workerUrl, 6, 3000);
 
   log("→ Đang đăng ký webhook với Telegram...");
   const setupResponse = await fetch(new URL("/set-webhook", workerUrl), {

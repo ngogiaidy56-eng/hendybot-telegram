@@ -315,6 +315,17 @@ async function handleMessage(message, env) {
       formatVnd(user.totalDeposit) + "</b>",
       env, backKeyboard());
   }
+  if (text === "/admin") {
+    if (!config.adminId || chatId !== config.adminId) {
+      return sendMessage(chatId, "Bạn không có quyền quản trị.", env);
+    }
+    return sendMessage(chatId, "🛠️ <b>BẢNG QUẢN TRỊ</b>\\nChọn tác vụ quản lý.", env, {
+      inline_keyboard: [
+        [{ text: "👥 DANH SÁCH NGƯỜI DÙNG", callback_data: "admin_list_users" }],
+        [{ text: "⬅️ MENU CHÍNH", callback_data: "back_start" }],
+      ],
+    });
+  }
   if (text.startsWith("/")) {
     return sendMessage(chatId, "Lệnh chưa được hỗ trợ. Gõ /help để xem hướng dẫn.", env);
   }

@@ -184,11 +184,17 @@ test("unknown routes return 404", async () => {
   assert.equal(response.status, 404);
 });
 
-test("credentials are never supplied by source defaults", () => {
-  const config = getConfig({});
+test("credentials are not defaulted or reused across purposes", () => {
+  const config = getConfig({ WEBHOOK_SETUP_KEY: "setup-secret-test" });
   assert.equal(config.botToken, "");
   assert.equal(config.webhookSecret, "");
   assert.equal(config.adminPassword, "");
+
+  const configuredAdmin = getConfig({
+    WEBHOOK_SETUP_KEY: "setup-secret-test",
+    ADMIN_PASSWORD: "separate-admin-password",
+  });
+  assert.equal(configuredAdmin.adminPassword, "separate-admin-password");
 });
 
 test("auto-setup is POST-only and requires the setup key", async () => {

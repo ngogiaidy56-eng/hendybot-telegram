@@ -652,7 +652,11 @@ test("express server handles secure webhook and WebSocket real-time balance stre
   assert.equal(acceptedRes.status, 200);
   assert.equal(await acceptedRes.text(), "OK");
 
-  // 3. Admin Auth via Express API
+  // 3. Admin APIs are blocked before login.
+  const unauthorizedOverview = await fetch(`${baseUrl}/api/admin/overview`);
+  assert.equal(unauthorizedOverview.status, 401);
+
+  // 4. Admin login returns an HttpOnly session cookie; the password is not stored client-side.
   const authRes = await fetch(`${baseUrl}/api/admin/auth`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -661,9 +665,18 @@ test("express server handles secure webhook and WebSocket real-time balance stre
   assert.equal(authRes.status, 200);
   const authJson = await authRes.json();
   assert.equal(authJson.ok, true);
+  const setCookie = authRes.headers.get("set-cookie");
+  assert.ok(setCookie, "Admin login should set a session cookie");
+  assert.match(setCookie, /HttpOnly/i);
+  const sessionCookie = setCookie.split(";")[0];
 
-  // 4. WebSocket Client Connection & Real-Time Balance Stream
-  const clientWs = new WebSocket(wsUrl);
+  const authorizedOverview = await fetch(`${baseUrl}/api/admin/overview`, {
+    headers: { cookie: sessionCookie },
+  });
+  assert.equal(authorizedOverview.status, 200);
+
+  // 5. WebSocket control channel requires the authenticated session cookie.
+  const clientWs = new WebSocket(wsUrl, { headers: { Cookie: sessionCookie } });
   await new Promise((resolve, reject) => {
     clientWs.on("open", resolve);
     clientWs.on("error", reject);
@@ -685,11 +698,12 @@ test("express server handles secure webhook and WebSocket real-time balance stre
   assert.ok(authMsg, "Should receive AUTH_SUCCESS via WebSocket");
 
   // Adjust balance via admin API and verify real-time WebSocket broadcast
-  await fetch(`${baseUrl}/api/admin/addmoney`, {
+  const addRes = await fetch(`${baseUrl}/api/admin/addmoney`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", cookie: sessionCookie },
     body: JSON.stringify({ userId: "8639286417", amount: 75000 }),
   });
+  assert.equal(addRes.status, 200);
 
   await new Promise((r) => setTimeout(r, 100));
   const balanceMsg = receivedMessages.find(

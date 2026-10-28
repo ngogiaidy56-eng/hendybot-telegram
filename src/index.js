@@ -1567,7 +1567,7 @@ function renderWebDashboard(url, config, stats) {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
-            'x-telegram-bot-api-secret-token': 'hendy_webhook_secret_key_2026'
+            'x-telegram-bot-api-secret-token': ''
           },
           body: JSON.stringify({
             update_id: Date.now(),
@@ -1674,7 +1674,7 @@ export default {
           const data = JSON.parse(event.data);
           if (data.action === "AUTH") {
             const expected = config.adminPassword;
-            if (data.password === expected || data.password === "hendy2026") {
+            if (expected && data.password === expected) {
               const allUsers = await getAllUsers(env);
               server.send(JSON.stringify({
                 action: "AUTH_SUCCESS",
@@ -1818,7 +1818,7 @@ export default {
       try {
         const body = await request.json().catch(() => ({}));
         const expected = config.adminPassword;
-        if (body.password === expected || body.password === "hendy2026") {
+        if (expected && body.password === expected) {
           addSystemLog("SUCCESS", "Admin đăng nhập thành công vào bảng quản trị.");
           return json({ ok: true, adminId: config.adminId });
         }

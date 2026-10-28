@@ -567,6 +567,9 @@ export function renderAdminPortalHtml(config, stats = {}) {
     }
 
     function getStoredPassword() {
+      // Remove raw passwords left by previous UI versions as soon as this panel loads.
+      sessionStorage.removeItem('hendy_admin_pass');
+      localStorage.removeItem('hendy_admin_pass');
       return sessionStorage.getItem('hendy_admin_authenticated') || localStorage.getItem('hendy_admin_authenticated') || '';
     }
 

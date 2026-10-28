@@ -54,6 +54,7 @@ export class JsonDatabase {
     this.backupPath = path.join(path.dirname(this.filePath), "database_backup.json");
     this.data = freshDatabase();
     this.writeQueue = Promise.resolve();
+    this.skipBackupOnce = false;
   }
 
   async load() {
@@ -77,7 +78,10 @@ export class JsonDatabase {
         walletAudit: Array.isArray(parsed.walletAudit) ? parsed.walletAudit : [],
         meta: isRecord(parsed.meta) ? parsed.meta : blank.meta
       };
+      // Re-save sanitized data and overwrite any old backup so legacy passwords are not retained.
+      this.skipBackupOnce = true;
       await this.save();
+      await fs.writeFile(this.backupPath, JSON.stringify(this.data, null, 2) + "\n", "utf8");
     } catch (error) {
       if (error.code === "ENOENT") {
         this.data = freshDatabase();
@@ -93,10 +97,14 @@ export class JsonDatabase {
 
   async #writeSnapshot() {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    try {
-      await fs.copyFile(this.filePath, this.backupPath);
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
+    if (this.skipBackupOnce) {
+      this.skipBackupOnce = false;
+    } else {
+      try {
+        await fs.copyFile(this.filePath, this.backupPath);
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
     }
     const tempPath = this.filePath + "." + process.pid + "." + randomUUID() + ".tmp";
     await fs.writeFile(tempPath, JSON.stringify(this.data, null, 2) + "\n", "utf8");

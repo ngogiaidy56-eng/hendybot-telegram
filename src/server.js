@@ -156,14 +156,27 @@ export function createServer(customEnv = process.env) {
   // ------------------------------------------
   // 4. AUTO SETUP & REGISTER WEBHOOK (GET / POST /auto-setup)
   // ------------------------------------------
-  app.all("/auto-setup", async (req, res) => {
-    if (!env.BOT_TOKEN) {
-      return sendJson(res, { ok: false, error: "Missing BOT_TOKEN secret." }, 503);
+  app.post("/auto-setup", async (req, res) => {
+    if (!env.WEBHOOK_SETUP_KEY || req.get("x-setup-key") !== env.WEBHOOK_SETUP_KEY) {
+      return sendJson(res, { ok: false, error: "Unauthorized." }, 401);
     }
-    const host = req.get("host") || "localhost:3000";
-    const protocol = req.protocol || "https";
-    const webhookUrl = `${protocol}://${host}/webhook`;
-    const secret = env.WEBHOOK_SECRET_TOKEN || config.webhookSecret;
+    if (!env.BOT_TOKEN || !env.WEBHOOK_SECRET_TOKEN) {
+      return sendJson(res, { ok: false, error: "Missing BOT_TOKEN or WEBHOOK_SECRET_TOKEN secret." }, 503);
+    }
+    const host = req.get("host") || "";
+    const protocol = req.protocol || "http";
+    let base;
+    try {
+      base = new URL(protocol + "://" + host);
+    } catch {
+      return sendJson(res, { ok: false, error: "Invalid webhook origin." }, 400);
+    }
+    if (base.protocol !== "https:" || !base.hostname || base.hostname === "localhost" ||
+        base.hostname.endsWith(".localhost") || base.hostname.endsWith(".local")) {
+      return sendJson(res, { ok: false, error: "Webhook requires a public HTTPS hostname." }, 400);
+    }
+    const webhookUrl = new URL("/webhook", base.origin).toString();
+    const secret = env.WEBHOOK_SECRET_TOKEN;
 
     addSystemLog("INFO", `Tự động thiết lập webhook & lệnh bot cho URL: ${webhookUrl}`);
 
@@ -254,7 +267,7 @@ export function createServer(customEnv = process.env) {
   app.post("/api/admin/auth", (req, res) => {
     const { password } = req.body || {};
     const expected = config.adminPassword;
-    if (password === expected || password === "hendy2026") {
+    if (expected && password === expected) {
       addSystemLog("SUCCESS", "Admin xác thực đăng nhập thành công vào bảng điều khiển.");
       return sendJson(res, { ok: true, adminId: config.adminId });
     }
@@ -478,7 +491,7 @@ export function createServer(customEnv = process.env) {
         const data = JSON.parse(message.toString());
         if (data.action === "AUTH") {
           const expected = config.adminPassword;
-          if (data.password === expected || data.password === "hendy2026") {
+          if (expected && data.password === expected) {
             const allUsers = await getAllUsers(env);
             ws.send(JSON.stringify({
               action: "AUTH_SUCCESS",

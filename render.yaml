@@ -1,0 +1,37 @@
+# Render Blueprint for the Hendy Telegram Bot Node.js web service.
+# For always-on 24/7 production webhooks, change plan: free to plan: starter.
+services:
+  - type: web
+    name: hendybot-telegram
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    autoDeployTrigger: checksPass
+    buildCommand: npm install && npm run check && npm test
+    startCommand: npm start
+    healthCheckPath: /healthz
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BOT_TITLE
+        value: HENDY CYBERTECH PRO v2026
+      - key: ADMIN_ID
+        value: "8639286417"
+      - key: CHANNEL_ID
+        value: "-100xxxxxxxxx"
+      - key: MINI_APP_URL
+        value: https://ngogiaidy56-eng.github.io/BOT-TELE
+      - key: SITE_URL
+        value: https://hendy-cybertech.com
+      - key: GROUP_URL
+        value: https://t.me/Hendy_Support_Group
+      - key: BOT_TOKEN
+        sync: false
+      - key: WEBHOOK_SECRET_TOKEN
+        sync: false
+      - key: WEBHOOK_SETUP_KEY
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false

@@ -64,3 +64,10 @@ Bind the returned namespace ID with the HENDY_KV block in wrangler.toml, then de
 - `scripts/setup.js`: Node.js setup utility that generates webhook secrets, deploys, registers the webhook, and sets bot commands.
 - `test/worker.test.js`: built-in Node.js tests for routes, webhook validation, menu generation, and admin authorization.
 - `npm run check`: checks JavaScript syntax. `npm test` runs unit tests. `npm run build` performs a Wrangler dry-run bundle. `npm run deploy` runs all checks before deployment.
+
+
+## JavaScript source-only archive
+
+The standalone Node.js ES module rewrite of the original Python bot is stored separately under javascript-bot/. It includes its own package.json, configuration template, local JSON database, tests, security notes, and architecture/operations docs. This directory is for source storage and review; it is not the Cloudflare Worker entry point and does not trigger a bot start command.
+
+Open the [JavaScript source archive](javascript-bot/) and read [its README](javascript-bot/README.md). The archive branch is archive/javascript-bot-source-only.

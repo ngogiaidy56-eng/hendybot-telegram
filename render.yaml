@@ -27,6 +27,8 @@ services:
         value: https://hendy-cybertech.com
       - key: GROUP_URL
         value: https://t.me/Hendy_Support_Group
+      - key: AUTO_REGISTER_WEBHOOK
+        value: "true"
       - key: BOT_TOKEN
         sync: false
       - key: WEBHOOK_SECRET_TOKEN

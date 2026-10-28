@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import http from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
@@ -233,6 +234,7 @@ export function createServer(customEnv = process.env) {
       return sendJson(res, { ok: false, error: "Invalid public application URL." }, 400);
     }
     if (base.protocol !== "https:" || !base.hostname || base.username || base.password ||
+        base.pathname !== "/" || base.search || base.hash ||
         base.hostname === "localhost" || base.hostname.endsWith(".localhost") ||
         base.hostname.endsWith(".local")) {
       return sendJson(res, { ok: false, error: "Webhook requires a configured public HTTPS URL." }, 400);

@@ -4,6 +4,21 @@ compatibility_date = "2026-10-28"
 
 [vars]
 ADMIN_ID = "8639286417"
-BOT_TOKEN = "87501728:AAHb1D0iJ1ve2BhqpPYb7JKfjM8xMvXfIY4"
 MINI_APP_URL = "https://ngogiaidy56-eng.github.io/BOT-TELE"
-CORE_BACKEND_URL = "https://hendybot-telegram.ngogiaidy56.workers.dev"
+
+# Configure secrets with:
+# npx wrangler secret put BOT_TOKEN
+# npx wrangler secret put WEBHOOK_SECRET_TOKEN
+# npx wrangler secret put WEBHOOK_SETUP_KEY
+#
+# Optional:
+# npx wrangler secret put CORE_BACKEND_URL
+# npx wrangler secret put DEPOSIT_INFO
+# npx wrangler secret put WEB_APP_URL
+#
+# Persistent user/state storage (recommended for production):
+# 1. npx wrangler kv namespace create HENDY_KV
+# 2. Uncomment the block below and replace the ID with the returned namespace ID.
+# [[kv_namespaces]]
+# binding = "HENDY_KV"
+# id = "PASTE_KV_NAMESPACE_ID_HERE"

@@ -157,31 +157,38 @@ export function createServer(customEnv = process.env) {
   // 3. SECURE WEBHOOK REGISTRATION (POST /set-webhook)
   // ------------------------------------------
   app.post("/set-webhook", async (req, res) => {
-    const setupKey = req.headers["x-setup-key"] || req.query.key || req.body?.setupKey;
-    const authorized = (env.WEBHOOK_SETUP_KEY && setupKey === env.WEBHOOK_SETUP_KEY) ||
-      (env.ADMIN_PASSWORD && setupKey === env.ADMIN_PASSWORD) ||
-      (!env.WEBHOOK_SETUP_KEY && !env.ADMIN_PASSWORD);
-
-    if (!authorized) {
+    if (!env.WEBHOOK_SETUP_KEY || req.get("x-setup-key") !== env.WEBHOOK_SETUP_KEY) {
       addSystemLog("WARN", "Từ chối yêu cầu /set-webhook: Setup key không chính xác");
-      return sendJson(res, { error: "Unauthorized." }, 401);
+      return sendJson(res, { ok: false, error: "Unauthorized." }, 401);
     }
 
     if (!env.BOT_TOKEN || !env.WEBHOOK_SECRET_TOKEN) {
-      return sendJson(res, { error: "Missing BOT_TOKEN or WEBHOOK_SECRET_TOKEN secret." }, 503);
+      return sendJson(res, { ok: false, error: "Missing BOT_TOKEN or WEBHOOK_SECRET_TOKEN secret." }, 503);
+    }
+
+    const configuredOrigin = env.PUBLIC_APP_URL || env.RENDER_EXTERNAL_URL ||
+      (env.RENDER_EXTERNAL_HOSTNAME ? "https://" + env.RENDER_EXTERNAL_HOSTNAME : "");
+    const requestOrigin = req.protocol + "://" + (req.get("host") || "");
+    let base;
+    try {
+      base = new URL(configuredOrigin || requestOrigin);
+    } catch {
+      return sendJson(res, { ok: false, error: "Invalid public application URL." }, 400);
+    }
+    if (base.protocol !== "https:" || !base.hostname || base.username || base.password ||
+        base.pathname !== "/" || base.search || base.hash ||
+        base.hostname === "localhost" || base.hostname.endsWith(".localhost") ||
+        base.hostname.endsWith(".local")) {
+      return sendJson(res, { ok: false, error: "Webhook requires a configured public HTTPS origin." }, 400);
     }
 
     const secret = env.WEBHOOK_SECRET_TOKEN;
     if (!/^[A-Za-z0-9_-]{1,256}$/.test(secret)) {
-      return sendJson(res, { error: "WEBHOOK_SECRET_TOKEN must contain only A-Z, a-z, 0-9, underscore or hyphen (1–256 chars)." }, 400);
+      return sendJson(res, { ok: false, error: "WEBHOOK_SECRET_TOKEN must contain only A-Z, a-z, 0-9, underscore or hyphen (1–256 chars)." }, 400);
     }
 
-    const host = req.get("host") || "localhost:3000";
-    const protocol = req.protocol || "https";
-    const baseUrl = `${protocol}://${host}`;
-    const webhookUrl = `${baseUrl}/webhook`;
-
-    addSystemLog("INFO", `Đang đăng ký Webhook với Telegram API: URL = ${webhookUrl}`);
+    const webhookUrl = new URL("/webhook", base.origin).toString();
+    addSystemLog("INFO", "Đang đăng ký Webhook với Telegram API.");
 
     try {
       const response = await fetch("https://api.telegram.org/bot" + env.BOT_TOKEN + "/setWebhook", {
@@ -198,9 +205,9 @@ export function createServer(customEnv = process.env) {
       const payload = await response.json().catch(() => ({}));
       const ok = Boolean(response.ok && payload.ok);
       if (ok) {
-        addSystemLog("SUCCESS", `Đăng ký Webhook thành công với Telegram! URL = ${webhookUrl}`);
+        addSystemLog("SUCCESS", "Đăng ký Webhook thành công với Telegram.");
       } else {
-        addSystemLog("ERROR", `Đăng ký Webhook thất bại: ${payload.description || "Lỗi Telegram API"}`);
+        addSystemLog("ERROR", "Đăng ký Webhook thất bại: " + (payload.description || "Lỗi Telegram API"));
       }
 
       return sendJson(
@@ -209,7 +216,7 @@ export function createServer(customEnv = process.env) {
         ok ? 200 : 502,
       );
     } catch (err) {
-      addSystemLog("ERROR", `Lỗi kết nối khi gọi Telegram setWebhook: ${err.message}`);
+      addSystemLog("ERROR", "Lỗi kết nối khi gọi Telegram setWebhook: " + err.message);
       return sendJson(res, { ok: false, error: err.message }, 500);
     }
   });

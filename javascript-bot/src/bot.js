@@ -367,7 +367,7 @@ async function handleCallback(query) {
   } else if (data.startsWith("manage_")) {
     const brand = data.slice("manage_".length).toUpperCase();
     const items = user.linkedAccounts?.[brand] || [];
-    text = "📂 <b>N HÃN TÀI KHOẢN " + escapeHtml(brand) + "</b>\n" +
+    text = "📂 <b>NHÃN TÀI KHOẢN " + escapeHtml(brand) + "</b>\n" +
       (items.length ? items.map((item, index) => (index + 1) + ". " + escapeHtml(item.label) + " — " + escapeHtml(item.miniCode)).join("\n") : "Chưa có nhãn nào.");
     markup = { inline_keyboard: [
       ...items.map((item, index) => [{ text: "❌ XÓA " + item.label.slice(0, 35), callback_data: "del_" + brand + "_" + index }]),

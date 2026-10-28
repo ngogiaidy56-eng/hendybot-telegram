@@ -80,4 +80,5 @@ test("legacy account migration drops password fields", async (t) => {
   assert.equal(user.linkedAccounts.SC88[0].miniCode, "code1");
   assert.equal(JSON.stringify(user).includes("NEVER_KEEP_THIS"), false);
   assert.equal(JSON.stringify(await fs.readFile(file, "utf8")).includes("NEVER_KEEP_THIS"), false);
+  assert.equal(JSON.stringify(await fs.readFile(path.join(dir, "database_backup.json"), "utf8")).includes("NEVER_KEEP_THIS"), false);
 });

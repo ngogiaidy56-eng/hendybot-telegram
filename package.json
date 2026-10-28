@@ -1,0 +1,14 @@
+{
+  "name": "hendy-server-pro",
+  "version": "1.0.0",
+  "description": "Telegram Bot Worker Service",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

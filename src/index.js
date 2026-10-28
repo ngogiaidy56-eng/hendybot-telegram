@@ -123,7 +123,7 @@ function getConfig(env = {}) {
     webAppUrl: validHttpsUrl(webApp) ? webApp : "",
     coreBackendUrl: validHttpsUrl(env.CORE_BACKEND_URL || "") ? env.CORE_BACKEND_URL : "",
     webhookSecret: env.WEBHOOK_SECRET_TOKEN || "",
-    adminPassword: env.ADMIN_PASSWORD || env.WEBHOOK_SETUP_KEY || "",
+    adminPassword: env.ADMIN_PASSWORD || "",
   };
 }
 

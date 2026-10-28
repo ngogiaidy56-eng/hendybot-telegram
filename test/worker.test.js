@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker from "../src/index.js";
+import worker, { getConfig } from "../src/index.js";
 import { createServer } from "../src/server.js";
 import { WebSocket } from "ws";
 
@@ -182,6 +182,34 @@ test("unknown routes return 404", async () => {
     ctx,
   );
   assert.equal(response.status, 404);
+});
+
+test("credentials are never supplied by source defaults", () => {
+  const config = getConfig({});
+  assert.equal(config.botToken, "");
+  assert.equal(config.webhookSecret, "");
+  assert.equal(config.adminPassword, "");
+});
+
+test("auto-setup is POST-only and requires the setup key", async () => {
+  const env = {
+    BOT_TOKEN: "123456:placeholder-token",
+    WEBHOOK_SECRET_TOKEN: "auto-secret-token",
+    WEBHOOK_SETUP_KEY: "setup-auto-test",
+  };
+  const getResponse = await worker.fetch(
+    new Request("https://hendybot.workers.dev/auto-setup"),
+    env,
+    ctx,
+  );
+  assert.equal(getResponse.status, 405);
+
+  const denied = await worker.fetch(
+    new Request("https://hendybot.workers.dev/auto-setup", { method: "POST" }),
+    env,
+    ctx,
+  );
+  assert.equal(denied.status, 401);
 });
 
 test("auto-setup endpoint registers webhook and commands", async (t) => {

@@ -202,6 +202,9 @@ async function main() {
   await setCloudflareSecret("BOT_TOKEN", botToken);
   await setCloudflareSecret("WEBHOOK_SECRET_TOKEN", webhookSecret);
   await setCloudflareSecret("WEBHOOK_SETUP_KEY", setupKey);
+  if (process.env.ADMIN_PASSWORD) {
+    await setCloudflareSecret("ADMIN_PASSWORD", process.env.ADMIN_PASSWORD);
+  }
 
   // wrangler secret put tạo version mới; kiểm tra lại sau khi secrets đã được áp dụng.
   await waitForWorker(workerUrl, 6, 3000);

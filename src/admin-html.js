@@ -692,8 +692,16 @@ export function renderAdminPortalHtml(config, stats = {}) {
           }
         };
 
-        socket.onclose = () => {
-          updateWsBadge('disconnected', 'WebSocket: Mất kết nối (Thử lại...)');
+        socket.onclose = (event) => {
+          updateWsBadge('disconnected', 'WebSocket: Mất kết nối');
+          if (event && event.code === 1008) {
+            // A restarted Render instance loses in-memory sessions; return to login instead of retrying forever.
+            clearStoredPassword();
+            document.getElementById('admin-dashboard').classList.remove('visible');
+            document.getElementById('login-screen').classList.remove('hidden');
+            showToast('Phiên quản trị đã hết hạn. Vui lòng đăng nhập lại.');
+            return;
+          }
           if (getStoredPassword()) {
             reconnectTimer = setTimeout(initWebSocket, 3000);
           }

@@ -1,6 +1,6 @@
-# Hendy Game Tool Bot (Cloudflare Workers)
+# Hendy Game Tool Bot — JavaScript (Cloudflare Workers)
 
-Telegram storefront bot inspired by the supplied menu reference. The Worker serves a Telegram webhook; GitHub Actions validates and deploys it.
+JavaScript ES modules only (Node.js for setup/tests, Cloudflare Workers Web APIs for runtime); no TypeScript or transpilation is required. Telegram storefront bot inspired by the supplied menu reference. The Worker serves a Telegram webhook; GitHub Actions validates and deploys it.
 
 ## Features
 
@@ -21,6 +21,9 @@ Telegram storefront bot inspired by the supplied menu reference. The Worker serv
 
     npm install
     npx wrangler login
+    npm run check
+    npm test
+    npm run build
     npm run setup
 
 The setup script verifies the supplied token, generates WEBHOOK_SECRET_TOKEN and WEBHOOK_SETUP_KEY, stores them as Worker secrets, deploys the Worker, registers the Telegram webhook, and verifies status.
@@ -53,3 +56,11 @@ Bind the returned namespace ID with the HENDY_KV block in wrangler.toml, then de
 - The bot does not automatically credit balances or claim that a giftcode succeeded without trusted backend/admin confirmation.
 - OTPs, passwords, and login codes should never be requested or sent to this bot.
 - This bot provides the storefront and request routing. Real inventory, accounting, payment verification, package entitlements, and giftcode redemption require a separately implemented trusted backend.
+
+
+## JavaScript source layout
+
+- `src/index.js`: Cloudflare Worker entry point, Telegram webhook routing, menu callbacks, and request flows.
+- `scripts/setup.js`: Node.js setup utility that generates webhook secrets, deploys, registers the webhook, and sets bot commands.
+- `test/worker.test.js`: built-in Node.js tests for routes, webhook validation, menu generation, and admin authorization.
+- `npm run build`: checks JavaScript syntax, runs tests, and performs a Wrangler dry-run bundle before deployment.

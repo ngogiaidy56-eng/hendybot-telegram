@@ -281,6 +281,7 @@ async function routeUserRequest(chatId, user, config, env, details) {
 async function handleMessage(message, env) {
   const config = getConfig(env);
   const chatId = String(message.chat.id);
+  const senderId = String(message.from?.id || chatId);
   const text = String(message.text || "").trim();
   const oldUser = await storeGet(env, "user:" + chatId);
   const user = await getUser(env, chatId, message.from);
@@ -316,7 +317,7 @@ async function handleMessage(message, env) {
       env, backKeyboard());
   }
   if (text === "/admin") {
-    if (!config.adminId || chatId !== config.adminId) {
+    if (!config.adminId || senderId !== config.adminId) {
       return sendMessage(chatId, "Bạn không có quyền quản trị.", env);
     }
     return sendMessage(chatId, "🛠️ <b>BẢNG QUẢN TRỊ</b>\nChọn tác vụ quản lý.", env, {

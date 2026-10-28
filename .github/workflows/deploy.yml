@@ -36,6 +36,9 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Build Worker bundle (dry run)
+        run: npm run build
+
   deploy-and-activate:
     name: Configure secrets, deploy Worker and activate webhook
     runs-on: ubuntu-latest

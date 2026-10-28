@@ -1,128 +1,55 @@
-# Hendy Telegram Bot (Cloudflare Workers)
+# Hendy Game Tool Bot (Cloudflare Workers)
 
-Telegram webhook bot deployed as a Cloudflare Worker. Bot tokens and webhook secrets are **Cloudflare secrets**, never values in `wrangler.toml`.
+Telegram storefront bot inspired by the supplied menu reference. The Worker serves a Telegram webhook; GitHub Actions validates and deploys it.
 
 ## Features
 
-- Telegram webhook with secret-token validation.
-- `/start`, `/help`, and `/id` commands.
-- Inline menu for customer support, Vietsub requests, Mini App, and admin actions.
-- Optional Cloudflare KV persistence for user profiles and conversation state.
-- Optional backend integration through `CORE_BACKEND_URL/api/bot-trigger`.
+- Game-service storefront menu: Minigame Live, tool rental, code catalog, deposit instructions, VIP packages, matchmaking requests, referrals, giftcode verification, and customer support.
+- Telegram commands: /start, /help, /id, and /balance.
+- User profile fields for main/secondary balance, confirmed deposits, referral count, and membership status.
+- Optional Cloudflare KV storage for user profiles and ongoing form state.
+- Optional HTTPS backend integration via CORE_BACKEND_URL/api/bot-trigger.
 - Protected webhook setup and status endpoints.
+- Webhook token and setup key generated during setup; secrets remain in Cloudflare secret storage.
 
-## 1. Rotate the exposed bot token first
+## Setup
 
-The previous `wrangler.toml` contained a bot token in source control. Treat that token as compromised and revoke/regenerate it in **@BotFather**. Use only the new token from this point on. Removing it from the current file does not remove it from Git history.
+1. Revoke any previously exposed bot token in @BotFather and create a new token.
+2. Add the following GitHub Actions secrets: BOT_TOKEN, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID.
+3. Set the repository variable WORKER_URL if your Worker URL is not the default.
+4. Authenticate Wrangler locally if testing manually:
 
-## 2. Install and configure
+    npm install
+    npx wrangler login
+    npm run setup
 
-Requirements: Node.js 20+ and a Cloudflare account with Wrangler access.
+The setup script verifies the supplied token, generates WEBHOOK_SECRET_TOKEN and WEBHOOK_SETUP_KEY, stores them as Worker secrets, deploys the Worker, registers the Telegram webhook, and verifies status.
 
-```bash
-npm install
-npx wrangler login
-npx wrangler secret put BOT_TOKEN
-npx wrangler secret put WEBHOOK_SECRET_TOKEN
-npx wrangler secret put WEBHOOK_SETUP_KEY
-```
+## Configure the storefront
 
-Use three separate values:
-- `BOT_TOKEN`: the new token from BotFather.
-- `WEBHOOK_SECRET_TOKEN`: 32+ random characters containing only letters, numbers, underscores or hyphens.
-- `WEBHOOK_SETUP_KEY`: another strong random secret used to protect setup endpoints.
+Edit wrangler.toml to set BOT_TITLE and your own ADMIN_ID. Configure optional SITE_URL, GROUP_URL, CHANNEL_URL, and SUPPORT_URL HTTPS links. Do not use third-party links unless you intend users to open them.
 
-Do not paste secrets into chat, commit them, or add them to `[vars]`.
+Configure secrets only through Wrangler or GitHub Actions:
 
-Optional configuration:
-```bash
-npx wrangler secret put CORE_BACKEND_URL
-npx wrangler secret put WEB_APP_URL
-npx wrangler secret put DEPOSIT_INFO
-```
+    npx wrangler secret put BOT_TOKEN
+    npx wrangler secret put WEBHOOK_SECRET_TOKEN
+    npx wrangler secret put WEBHOOK_SETUP_KEY
+    npx wrangler secret put DEPOSIT_INFO
+    npx wrangler secret put CORE_BACKEND_URL
 
-`CORE_BACKEND_URL` must be the HTTPS base URL of a backend that implements `POST /api/bot-trigger`. Leave it unset if this integration is not deployed; Vietsub requests will report that the backend is unavailable instead of claiming the video was processed.
+CORE_BACKEND_URL must be your own HTTPS backend implementing POST /api/bot-trigger. Without it, service requests can fall back to a notification for ADMIN_ID. If neither backend nor admin is configured, the bot tells the user the request could not be delivered.
 
-Update `ADMIN_ID` in `wrangler.toml` to the numeric Telegram user ID of the bot administrator. Check your ID by messaging the bot and using `/id`.
+## Persistent data
 
-## 3. Persist state in Cloudflare KV (recommended)
+For production, create a KV namespace:
 
-Without KV, the Worker uses in-memory fallback storage for local smoke tests only; user state may be lost when an isolate is recycled.
+    npx wrangler kv namespace create HENDY_KV
 
-```bash
-npx wrangler kv namespace create HENDY_KV
-```
+Bind the returned namespace ID with the HENDY_KV block in wrangler.toml, then deploy again. Without KV, in-memory state is only a local smoke-test fallback and may be lost when the Worker isolate is recycled.
 
-Copy the returned namespace ID into the commented `[[kv_namespaces]]` block in `wrangler.toml`, uncomment the three lines, and deploy again. This stores user profiles and pending conversation states. For real payments or balances, use a transactional database/backend; KV is not a financial ledger.
+## Important transaction behavior
 
-## 4. Test, deploy, and activate webhook
-
-```bash
-npm run check
-npm test
-npx wrangler deploy
-```
-
-After deployment, activate the webhook with a POST request. Do not use a browser GET request:
-
-```bash
-curl -X POST "https://hendybot-telegram.ngogiaidy56.workers.dev/set-webhook" \
-  -H "x-setup-key: YOUR_WEBHOOK_SETUP_KEY"
-```
-
-Check webhook status:
-
-```bash
-curl "https://hendybot-telegram.ngogiaidy56.workers.dev/webhook-info" \
-  -H "x-setup-key: YOUR_WEBHOOK_SETUP_KEY"
-```
-
-The setup endpoints never return the webhook secret. Keep the setup key private. A healthy root endpoint at `/` returns JSON service status.
-
-## 5. Behavior notes
-
-- The bot does not pretend a payment has succeeded and does not deduct money for unimplemented services.
-- Deposit instructions are shown only when `DEPOSIT_INFO` is configured.
-- Vietsub links are forwarded only when the backend URL is configured and responds successfully.
-- Admin actions compare the sender's Telegram ID against `ADMIN_ID`.
-- Telegram menu links must use valid HTTPS URLs.
-
-
-## Automatic secret generation and webhook activation
-
-The setup program creates a fresh `WEBHOOK_SECRET_TOKEN` and `WEBHOOK_SETUP_KEY` using Node.js cryptographic randomness, uploads them as Cloudflare Worker secrets, deploys the Worker, registers the Telegram webhook, and verifies the webhook status. Secret values are never printed or committed.
-
-### One-command setup (recommended)
-
-1. Revoke the previously exposed bot token in **@BotFather** and create a new token.
-2. Install Node.js 20+ and dependencies, then authenticate Wrangler with your Cloudflare account.
-3. Run:
-
-```bash
-npm install
-npx wrangler login
-npm run setup
-```
-
-The setup script asks for the new bot token with terminal input hidden. It validates the token via Telegram `getMe`, generates both secrets, stores all three with `wrangler secret put`, deploys, calls the protected `/set-webhook` endpoint, and verifies `/webhook-info`.
-
-If your Worker URL is different from the default, set `WORKER_URL` before running. It must be the HTTPS origin only (no path or query).
-
-**Windows PowerShell**
-```powershell
-$env:WORKER_URL = "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev"
-npm run setup
-```
-
-**Linux/macOS**
-```bash
-WORKER_URL="https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev" npm run setup
-```
-
-You can pass the token from a preconfigured environment variable instead of the hidden prompt by setting `BOT_TOKEN`. Avoid putting the literal token in shell command history or CI logs.
-
-The Cloudflare account must already be authenticated with Wrangler (`npx wrangler login`) and have permission to deploy this Worker and manage Worker secrets. The script intentionally does not attempt to invent or recover a BotFather token. If the script says the deployed Worker health check failed, correct `WORKER_URL` to match the URL shown by `npx wrangler deploy`, then run `npm run setup` again. Each new setup run rotates the webhook/setup secrets and registers the matching new webhook secret.
-
-### What cannot be done automatically
-
-A Worker cannot securely create or read back its own Cloudflare secret values from its request handler. This setup command must run locally or in a trusted deployment environment with Wrangler permissions. Keep the terminal and Cloudflare account secure.
+- A request to deposit money is not a confirmation that money has been received.
+- The bot does not automatically credit balances or claim that a giftcode succeeded without trusted backend/admin confirmation.
+- OTPs, passwords, and login codes should never be requested or sent to this bot.
+- This bot provides the storefront and request routing. Real inventory, accounting, payment verification, package entitlements, and giftcode redemption require a separately implemented trusted backend.

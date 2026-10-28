@@ -173,6 +173,8 @@ async function main() {
       { command: "start", description: "Mở menu chính" },
       { command: "help", description: "Xem hướng dẫn sử dụng" },
       { command: "id", description: "Xem Telegram ID của bạn" },
+      { command: "balance", description: "Xem số dư đang ghi nhận" },
+      { command: "admin", description: "Mở bảng quản trị (chỉ admin)" },
     ],
   });
 

@@ -1,7 +1,5 @@
 const MEMORY = new Map();
 
-const BRANDS = ["KJC", "KJC_CU", "ABCVIP"];
-
 function json(data, status = 200) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
@@ -25,12 +23,17 @@ function validHttpsUrl(value) {
 }
 
 function getConfig(env) {
+  const webApp = env.WEB_APP_URL || env.MINI_APP_URL || "";
   return {
     botToken: env.BOT_TOKEN,
     adminId: String(env.ADMIN_ID || ""),
+    title: String(env.BOT_TITLE || "HENDY GAME TOOL BOT"),
+    siteUrl: validHttpsUrl(env.SITE_URL || "") ? env.SITE_URL : "",
+    groupUrl: validHttpsUrl(env.GROUP_URL || "") ? env.GROUP_URL : "",
+    channelUrl: validHttpsUrl(env.CHANNEL_URL || "") ? env.CHANNEL_URL : "",
+    supportUrl: validHttpsUrl(env.SUPPORT_URL || "") ? env.SUPPORT_URL : "",
     miniAppUrl: validHttpsUrl(env.MINI_APP_URL || "") ? env.MINI_APP_URL : "",
-    webAppUrl: validHttpsUrl(env.WEB_APP_URL || env.MINI_APP_URL || "")
-      ? (env.WEB_APP_URL || env.MINI_APP_URL) : "",
+    webAppUrl: validHttpsUrl(webApp) ? webApp : "",
     coreBackendUrl: validHttpsUrl(env.CORE_BACKEND_URL || "") ? env.CORE_BACKEND_URL : "",
   };
 }
@@ -49,40 +52,46 @@ async function storePut(env, key, value) {
 }
 
 async function getUser(env, chatId, from) {
-  let user = await storeGet(env, `user:${chatId}`);
+  let user = await storeGet(env, "user:" + chatId);
   if (!user) {
     user = {
       id: String(chatId),
       name: from?.first_name || "Khách",
       createdAt: new Date().toISOString(),
       balance: 0,
-      history: [],
+      secondaryBalance: 0,
+      totalDeposit: 0,
+      referralCount: 0,
+      referredBy: null,
+      status: "Bình thường",
     };
-    await storePut(env, `user:${chatId}`, user);
+    await storePut(env, "user:" + chatId, user);
   } else if (from?.first_name && user.name !== from.first_name) {
     user.name = from.first_name;
-    await storePut(env, `user:${chatId}`, user);
+    await storePut(env, "user:" + chatId, user);
   }
   return user;
 }
 
-const getState = (env, id) => storeGet(env, `state:${id}`);
-const setState = (env, id, value) => storePut(env, `state:${id}`, value);
+const getState = (env, id) => storeGet(env, "state:" + id);
+const setState = (env, id, value) => storePut(env, "state:" + id, value);
+
 async function clearState(env, id) {
-  if (env.HENDY_KV) return env.HENDY_KV.delete(`state:${id}`);
-  MEMORY.delete(`state:${id}`);
+  if (env.HENDY_KV) return env.HENDY_KV.delete("state:" + id);
+  MEMORY.delete("state:" + id);
 }
 
 async function telegram(method, payload, env) {
   if (!env.BOT_TOKEN) throw new Error("Thiếu secret BOT_TOKEN.");
-  const response = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`, {
+  const response = await fetch("https://api.telegram.org/bot" + env.BOT_TOKEN + "/" + method, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(payload || {}),
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok || !result.ok) {
-    throw new Error(`Telegram API ${method} thất bại: ${result.description || response.statusText || response.status}`);
+    throw new Error("Telegram API " + method + " thất bại: " +
+      (result.description || response.statusText || response.status));
   }
   return result.result;
 }
@@ -118,36 +127,81 @@ async function answerCallback(queryId, text, env, alert = false) {
 
 function mainKeyboard(config) {
   const rows = [
-    [{ text: "🛍️ Danh mục dịch vụ", callback_data: "shop_code_mini" }],
-    [{ text: "🌐 Gửi yêu cầu dịch vụ", callback_data: "social_service" }],
-    [{ text: "💳 Nạp tiền", callback_data: "deposit" }],
-    [{ text: "💎 Trung tâm khách hàng", callback_data: "cshk_center" }],
-    [{ text: "🎬 Gửi video yêu cầu Vietsub", callback_data: "bot_vietsub" }],
-    [{ text: "🚀 Mở Mini App", callback_data: "compose_web_tma" }],
-    [{ text: "🛠️ Quản trị", callback_data: "admin_panel" }],
+    [
+      { text: "🚀 MINIGAME LIVE", callback_data: "menu_minigame" },
+      { text: "🧰 THUÊ TOOL (NEW)", callback_data: "menu_tool_rental" },
+    ],
+    [{ text: "🎁 MUA LÌ XÌ - CODE MÀN - CODE TELE", callback_data: "menu_codes" }],
+    [
+      { text: "💳 NẠP TIỀN", callback_data: "menu_deposit" },
+      { text: "🛡️ OTP & PROXY", callback_data: "menu_otp_proxy" },
+    ],
+    [{ text: "🏆 VIP KHO CÔNG CỤ ĐẶC QUYỀN", callback_data: "menu_vip_tools" }],
+    [{ text: "💎 TRUNG TÂM KHÁCH HÀNG", callback_data: "menu_customer" }],
+    [{ text: "⚔️ HỆ THỐNG GHÉP ĐÔI ĐẤU", callback_data: "menu_duel" }],
+    [
+      { text: "👥 Giới thiệu REF", callback_data: "menu_referral" },
+      { text: "👑 TRUNG TÂM VIP", callback_data: "menu_vip_center" },
+    ],
   ];
-  if (config.miniAppUrl) {
-    rows[5] = [{ text: "🚀 Mở Mini App", web_app: { url: config.miniAppUrl } }];
-  }
+  const links = [];
+  if (config.groupUrl) links.push({ text: "👨‍👩‍👧 NHÓM CHAT", url: config.groupUrl });
+  if (config.channelUrl) links.push({ text: "📢 KÊNH THÔNG BÁO", url: config.channelUrl });
+  if (links.length) rows.push(links);
+  rows.push([
+    { text: "🎟️ NHẬP GIFTCODE", callback_data: "menu_giftcode" },
+    { text: "🧑🏻‍💻 LIÊN HỆ CSKH", callback_data: "menu_support" },
+  ]);
+  if (config.miniAppUrl) rows.push([{ text: "📱 MỞ MINI APP", web_app: { url: config.miniAppUrl } }]);
   return { inline_keyboard: rows };
 }
 
 const backKeyboard = () => ({
-  inline_keyboard: [[{ text: "⬅️ Menu chính", callback_data: "back_start" }]],
+  inline_keyboard: [[{ text: "⬅️ MENU CHÍNH", callback_data: "back_start" }]],
 });
 
-async function sendHome(chatId, user, env, config, edit) {
-  const message = [
-    "🤖 <b>HENDY TELEGRAM BOT</b>",
-    `Xin chào, <b>${htmlEscape(user.name)}</b>.`,
-    `Telegram ID: <code>${htmlEscape(chatId)}</code>`,
+function requestKeyboard(category, label = "📝 GỬI YÊU CẦU") {
+  return {
+    inline_keyboard: [
+      [{ text: label, callback_data: "request|" + category }],
+      [{ text: "⬅️ MENU CHÍNH", callback_data: "back_start" }],
+    ],
+  };
+}
+
+function formatVnd(value) {
+  const number = Number(value);
+  return (Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0)
+    .toLocaleString("vi-VN") + " VNĐ";
+}
+
+function homeText(chatId, user, config) {
+  const lines = [
+    "🎮 <b>" + htmlEscape(config.title) + "</b>",
     "",
-    "Chọn chức năng bên dưới. Số dư mặc định là 0; bot không tự xác nhận thanh toán.",
-  ].join("\n");
-  if (edit) {
-    return editMessage(chatId, edit.message_id, message, env, mainKeyboard(config));
+    "👋 Buổi chiều vui vẻ nhé, <b>" + htmlEscape(user.name) + "</b>!",
+    "🪪 ID: <code>" + htmlEscape(chatId) + "</code>",
+    "💰 Tổng nạp: <b>" + formatVnd(user.totalDeposit) + "</b>",
+    "💵 Ví chính: <b>" + formatVnd(user.balance) + "</b>",
+    "💎 Ví phụ: <b>" + formatVnd(user.secondaryBalance) + "</b>",
+    "🛡️ Trạng thái thành viên: [" + htmlEscape(user.status || "Bình thường") + "]",
+    "",
+  ];
+  if (config.siteUrl) lines.push("🌟 Website: <a href=\"" + htmlEscape(config.siteUrl) + "\">" + htmlEscape(config.siteUrl) + "</a>");
+  if (config.groupUrl) lines.push("🌟 Nhóm chat: <a href=\"" + htmlEscape(config.groupUrl) + "\">Mở nhóm hỗ trợ</a>");
+  if (!config.siteUrl && !config.groupUrl) {
+    lines.push("ℹ️ Liên kết website/nhóm chat có thể được quản trị viên cấu hình.");
   }
-  return sendMessage(chatId, message, env, mainKeyboard(config));
+  lines.push("", "<i>Chọn chức năng bên dưới. Số dư chỉ thay đổi khi backend hoặc quản trị viên xác nhận giao dịch hợp lệ.</i>");
+  return lines.join("\n");
+}
+
+async function sendHome(chatId, user, env, config, messageId) {
+  const text = homeText(chatId, user, config);
+  if (messageId) {
+    return editMessage(chatId, messageId, text, env, mainKeyboard(config));
+  }
+  return sendMessage(chatId, text, env, mainKeyboard(config));
 }
 
 async function listUsers(env) {
@@ -167,42 +221,113 @@ async function listUsers(env) {
 }
 
 async function submitToBackend(config, body) {
-  if (!config.coreBackendUrl) {
-    return { ok: false, reason: "CORE_BACKEND_URL chưa được cấu hình." };
+  if (!config.coreBackendUrl) return { ok: false, reason: "CORE_BACKEND_URL chưa được cấu hình." };
+  try {
+    const endpoint = new URL("/api/bot-trigger", config.coreBackendUrl);
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { ok: false, reason: payload.error || ("Backend trả về HTTP " + response.status + ".") };
+    }
+    return { ok: payload.success !== false, payload };
+  } catch (error) {
+    return { ok: false, reason: error.message || "Không kết nối được backend." };
   }
-  const endpoint = new URL("/api/bot-trigger", config.coreBackendUrl);
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    return { ok: false, reason: payload.error || `Backend trả về HTTP ${response.status}.` };
+}
+
+async function notifyAdmin(env, message) {
+  const adminId = String(env.ADMIN_ID || "");
+  if (!adminId || !env.BOT_TOKEN) return false;
+  try {
+    await sendMessage(adminId, message, env);
+    return true;
+  } catch (error) {
+    console.error("Không gửi được thông báo quản trị:", error.message);
+    return false;
   }
-  return { ok: payload.success !== false, payload };
+}
+
+async function routeUserRequest(chatId, user, config, env, details) {
+  const request = {
+    chatId: String(chatId),
+    userName: user.name,
+    action: details.action,
+    category: details.category || "",
+    details: String(details.details || "").slice(0, 1000),
+    source: "telegram",
+    createdAt: new Date().toISOString(),
+  };
+  const backend = await submitToBackend(config, request);
+  if (backend.ok) return { ok: true, destination: "backend" };
+
+  const adminMessage = [
+    "📩 <b>YÊU CẦU MỚI TỪ BOT</b>",
+    "Loại: " + htmlEscape(request.category || request.action),
+    "Người gửi: " + htmlEscape(user.name) + " (<code>" + htmlEscape(chatId) + "</code>)",
+    "Nội dung: " + htmlEscape(request.details || "(không có)"),
+    "",
+    "Trạng thái: chờ quản trị viên xử lý; chưa xác nhận thanh toán hoặc dịch vụ.",
+  ].join("\n");
+  const adminNotified = await notifyAdmin(env, adminMessage);
+  return adminNotified
+    ? { ok: true, destination: "admin" }
+    : { ok: false, reason: backend.reason || "Chưa cấu hình backend hoặc ADMIN_ID." };
 }
 
 async function handleMessage(message, env) {
   const config = getConfig(env);
   const chatId = String(message.chat.id);
-  const user = await getUser(env, chatId, message.from);
   const text = String(message.text || "").trim();
+  const oldUser = await storeGet(env, "user:" + chatId);
+  const user = await getUser(env, chatId, message.from);
 
   if (text === "/start" || text.startsWith("/start ")) {
     await clearState(env, chatId);
+    const payload = text.split(/\s+/, 2)[1] || "";
+    const refMatch = payload.match(/^ref_(\d+)$/);
+    if (!oldUser && refMatch && refMatch[1] !== chatId) {
+      const referrer = await storeGet(env, "user:" + refMatch[1]);
+      if (referrer) {
+        referrer.referralCount = (Number(referrer.referralCount) || 0) + 1;
+        await storePut(env, "user:" + refMatch[1], referrer);
+        user.referredBy = refMatch[1];
+        await storePut(env, "user:" + chatId, user);
+      }
+    }
     return sendHome(chatId, user, env, config);
   }
   if (text === "/help") {
     return sendMessage(chatId,
-      "Lệnh hỗ trợ:\n/start — mở menu\n/help — xem hướng dẫn\n/id — xem Telegram ID",
+      "Lệnh sử dụng:\n/start — mở menu chính\n/help — hướng dẫn\n/id — xem Telegram ID\n/balance — xem số dư đang ghi nhận\n\nKhông gửi mật khẩu hoặc mã OTP cho bất kỳ ai.",
       env, backKeyboard());
   }
   if (text === "/id") {
-    return sendMessage(chatId, `Telegram ID của bạn: <code>${htmlEscape(chatId)}</code>`, env);
+    return sendMessage(chatId, "Telegram ID của bạn: <code>" + htmlEscape(chatId) + "</code>", env);
+  }
+  if (text === "/balance") {
+    return sendMessage(chatId,
+      "💵 Ví chính: <b>" + formatVnd(user.balance) + "</b>\n💎 Ví phụ: <b>" +
+      formatVnd(user.secondaryBalance) + "</b>\n💰 Tổng nạp đã xác nhận: <b>" +
+      formatVnd(user.totalDeposit) + "</b>",
+      env, backKeyboard());
+  }
+  if (text === "/admin") {
+    if (!config.adminId || chatId !== config.adminId) {
+      return sendMessage(chatId, "Bạn không có quyền quản trị.", env);
+    }
+    return sendMessage(chatId, "🛠️ <b>BẢNG QUẢN TRỊ</b>\nChọn tác vụ quản lý.", env, {
+      inline_keyboard: [
+        [{ text: "👥 DANH SÁCH NGƯỜI DÙNG", callback_data: "admin_list_users" }],
+        [{ text: "⬅️ MENU CHÍNH", callback_data: "back_start" }],
+      ],
+    });
   }
   if (text.startsWith("/")) {
-    return sendMessage(chatId, "Lệnh không được hỗ trợ. Gõ /help để xem các lệnh.", env);
+    return sendMessage(chatId, "Lệnh chưa được hỗ trợ. Gõ /help để xem hướng dẫn.", env);
   }
 
   const state = await getState(env, chatId);
@@ -210,41 +335,59 @@ async function handleMessage(message, env) {
     return sendMessage(chatId, "Hãy chọn một chức năng từ menu hoặc gõ /start.", env, mainKeyboard(config));
   }
 
-  if (state.action === "waiting_video_link") {
-    let videoUrl;
-    try {
-      videoUrl = new URL(text);
-      if (!["https:", "http:"].includes(videoUrl.protocol)) throw new Error("invalid protocol");
-    } catch {
-      return sendMessage(chatId, "Link không hợp lệ. Hãy gửi một URL bắt đầu bằng https:// hoặc http://.", env);
-    }
-    await clearState(env, chatId);
-    const result = await submitToBackend(config, {
-      chatId,
-      userName: user.name,
-      action: "VIETSUB_VIDEO_REQUEST",
-      videoUrl: videoUrl.toString(),
-      source: "telegram",
+  if (state.action === "waiting_service_details") {
+    const result = await routeUserRequest(chatId, user, config, env, {
+      action: "SERVICE_REQUEST",
+      category: state.category,
+      details: text,
     });
     if (!result.ok) {
       return sendMessage(chatId,
-        "⚠️ Chưa gửi được video vào pipeline Vietsub. Backend chưa cấu hình hoặc đang lỗi; bot chưa xác nhận rằng video đã được xử lý.\n\n" +
-        "Bạn hãy thử lại sau hoặc liên hệ quản trị viên.", env, backKeyboard());
+        "⚠️ Chưa gửi được yêu cầu. Vui lòng thử lại sau hoặc liên hệ quản trị viên. Nội dung vẫn chưa được xác nhận đã tiếp nhận.",
+        env, backKeyboard());
     }
+    await clearState(env, chatId);
     return sendMessage(chatId,
-      "✅ Đã chuyển yêu cầu video tới backend. Trạng thái xử lý cuối cùng phụ thuộc vào pipeline Vietsub.", env, backKeyboard());
+      "✅ Đã chuyển yêu cầu đến " + (result.destination === "backend" ? "hệ thống xử lý" : "quản trị viên") +
+      ". Đây chưa phải xác nhận thanh toán hoặc hoàn thành dịch vụ.",
+      env, backKeyboard());
   }
 
-  if (state.action === "waiting_live_link") {
-    await clearState(env, chatId);
-    const adminId = config.adminId;
-    if (adminId) {
-      await sendMessage(adminId,
-        `📩 <b>Yêu cầu dịch vụ mới</b>\nNền tảng: ${htmlEscape(state.platform)}\nNgười gửi: ${htmlEscape(user.name)} (<code>${htmlEscape(chatId)}</code>)\nLink: ${htmlEscape(text)}\n\nChưa có thanh toán hoặc dịch vụ nào được tự động xác nhận.`,
-        env).catch((error) => console.error("Không gửi được thông báo quản trị:", error.message));
+  if (state.action === "waiting_deposit_reference") {
+    const result = await routeUserRequest(chatId, user, config, env, {
+      action: "DEPOSIT_VERIFICATION_REQUEST",
+      category: "NẠP TIỀN / XÁC MINH GIAO DỊCH",
+      details: text,
+    });
+    if (!result.ok) {
+      return sendMessage(chatId,
+        "⚠️ Chưa gửi được yêu cầu xác minh. Không gửi mã OTP, mật khẩu hoặc thông tin đăng nhập. Vui lòng thử lại sau.",
+        env, backKeyboard());
     }
+    await clearState(env, chatId);
     return sendMessage(chatId,
-      "✅ Đã nhận link và chuyển yêu cầu để quản trị viên xem xét. Bot chưa thực hiện dịch vụ và không tự trừ tiền.", env, backKeyboard());
+      "✅ Đã gửi yêu cầu xác minh giao dịch. Số dư chỉ cập nhật sau khi backend hoặc quản trị viên xác nhận hợp lệ.",
+      env, backKeyboard());
+  }
+
+  if (state.action === "waiting_giftcode") {
+    if (text.length < 3 || text.length > 100) {
+      return sendMessage(chatId, "Giftcode không hợp lệ về độ dài. Hãy nhập lại mã hoặc gõ /start để hủy.", env);
+    }
+    const result = await routeUserRequest(chatId, user, config, env, {
+      action: "REDEEM_GIFTCODE_REQUEST",
+      category: "GIFTCODE",
+      details: text,
+    });
+    if (!result.ok) {
+      return sendMessage(chatId,
+        "⚠️ Chưa thể xác minh giftcode vì backend/CSKH chưa sẵn sàng. Mã chưa được xác nhận và số dư chưa thay đổi.",
+        env, backKeyboard());
+    }
+    await clearState(env, chatId);
+    return sendMessage(chatId,
+      "✅ Đã gửi giftcode để xác minh. Bot chưa cộng tiền hay đánh dấu đổi mã thành công; hãy chờ hệ thống/CSKH xác nhận.",
+      env, backKeyboard());
   }
 
   await clearState(env, chatId);
@@ -258,7 +401,7 @@ async function handleCallback(query, env) {
   const messageId = query.message?.message_id;
   const data = String(query.data || "");
 
-  if ((data === "admin_panel" || data === "admin_list_users") &&
+  if (["admin_panel", "admin_list_users"].includes(data) &&
       (!config.adminId || senderId !== config.adminId)) {
     return answerCallback(query.id, "Bạn không có quyền quản trị.", env, true)
       .catch((error) => console.error("Không trả lời được callback quản trị:", error.message));
@@ -271,71 +414,118 @@ async function handleCallback(query, env) {
 
   if (data === "back_start") {
     await clearState(env, chatId);
-    return messageId
-      ? sendHome(chatId, user, env, config, { message_id: messageId })
-      : sendHome(chatId, user, env, config);
+    return sendHome(chatId, user, env, config, messageId);
+  }
+
+  if (data.startsWith("request|")) {
+    const category = data.slice("request|".length);
+    await setState(env, chatId, { action: "waiting_service_details", category });
+    return editMessage(chatId, messageId,
+      "📝 <b>GỬI YÊU CẦU: " + htmlEscape(category.replace(/_/g, " ")) + "</b>\n\nHãy nhập mô tả ngắn về gói dịch vụ bạn cần. Không gửi mật khẩu, mã OTP hoặc mã đăng nhập.",
+      env, backKeyboard());
   }
 
   let text = "";
   let keyboard = backKeyboard();
 
-  if (data === "shop_code_mini") {
-    text = "🛍️ <b>DANH MỤC DỊCH VỤ</b>\nChọn danh mục để gửi yêu cầu cho quản trị viên.";
+  if (data === "menu_minigame") {
+    text = "🚀 <b>MINIGAME LIVE</b>\nXem thông tin gói và gửi yêu cầu để quản trị viên tư vấn. Giá và tình trạng dịch vụ cần được xác nhận trước khi thanh toán.";
+    keyboard = requestKeyboard("MINIGAME_LIVE");
+  } else if (data === "menu_tool_rental") {
+    text = "🧰 <b>THUÊ TOOL</b>\nChọn gửi yêu cầu thuê công cụ. Quản trị viên sẽ xác nhận phiên bản, thời hạn, giá và điều kiện sử dụng.";
+    keyboard = requestKeyboard("TOOL_RENTAL");
+  } else if (data === "menu_codes") {
+    text = "🎁 <b>KHO MÃ / QUÀ TẶNG</b>\nChọn loại mã cần hỏi. Giá, tồn kho và thời hạn sử dụng phải được xác nhận từ hệ thống.";
+    keyboard = {
+      inline_keyboard: [
+        [{ text: "🎁 MÃ LÌ XÌ", callback_data: "request|CODE_LIXI" }],
+        [{ text: "🖥️ CODE MÀN", callback_data: "request|CODE_MAN" }],
+        [{ text: "📨 CODE TELE", callback_data: "request|CODE_TELE" }],
+        [{ text: "⬅️ MENU CHÍNH", callback_data: "back_start" }],
+      ],
+    };
+  } else if (data === "menu_deposit") {
+    text = "💳 <b>NẠP TIỀN</b>\n" +
+      (env.DEPOSIT_INFO ? htmlEscape(env.DEPOSIT_INFO) : "Quản trị viên chưa cấu hình hướng dẫn nạp tiền.") +
+      "\n\nChỉ quản trị viên/backend mới xác nhận giao dịch. Bot không tự cộng số dư khi người dùng gửi thông báo chuyển khoản.";
+    keyboard = {
+      inline_keyboard: [
+        [{ text: "🧾 GỬI YÊU CẦU XÁC MINH", callback_data: "deposit_verify" }],
+        [{ text: "⬅️ MENU CHÍNH", callback_data: "back_start" }],
+      ],
+    };
+  } else if (data === "deposit_verify") {
+    await setState(env, chatId, { action: "waiting_deposit_reference" });
+    text = "🧾 <b>XÁC MINH GIAO DỊCH</b>\nGửi mã giao dịch hoặc nội dung tham chiếu để CSKH kiểm tra. Không gửi mật khẩu, mã OTP hay thông tin thẻ đầy đủ.";
+  } else if (data === "menu_otp_proxy") {
+    text = "🛡️ <b>OTP & PROXY</b>\nBot không yêu cầu bạn gửi mã OTP, mật khẩu hoặc mã đăng nhập. Nếu cần tư vấn proxy cho mục đích hợp pháp, hãy gửi yêu cầu để CSKH xác nhận gói và điều kiện sử dụng.";
+    keyboard = requestKeyboard("PROXY_PACKAGE", "📨 HỎI GÓI PROXY");
+  } else if (data === "menu_vip_tools") {
+    text = "🏆 <b>KHO CÔNG CỤ ĐẶC QUYỀN</b>\nThông tin gói VIP, tính năng và thời hạn sẽ được quản trị viên xác nhận trước khi đăng ký.";
+    keyboard = requestKeyboard("VIP_TOOLS");
+  } else if (data === "menu_customer") {
+    text = "💎 <b>TRUNG TÂM KHÁCH HÀNG</b>\nBạn có thể gửi yêu cầu hỗ trợ tại đây. Không gửi mật khẩu hoặc mã xác thực.";
+    if (config.supportUrl) {
+      keyboard = { inline_keyboard: [
+        [{ text: "💬 MỞ CSKH", url: config.supportUrl }],
+        [{ text: "📝 GỬI YÊU CẦU", callback_data: "request|CUSTOMER_SUPPORT" }],
+        [{ text: "⬅️ MENU CHÍNH", callback_data: "back_start" }],
+      ] };
+    } else {
+      keyboard = requestKeyboard("CUSTOMER_SUPPORT", "📝 GỬI YÊU CẦU CSKH");
+    }
+  } else if (data === "menu_duel") {
+    text = "⚔️ <b>HỆ THỐNG GHÉP ĐÔI ĐẤU</b>\nGửi yêu cầu để quản trị viên cho biết chế độ, lịch và điều kiện tham gia.";
+    keyboard = requestKeyboard("DUEL_MATCHMAKING");
+  } else if (data === "menu_referral") {
+    let referralLink = "";
+    try {
+      const bot = await telegram("getMe", {}, env);
+      if (bot.username) referralLink = "https://t.me/" + bot.username + "?start=ref_" + chatId;
+    } catch (error) {
+      console.error("Không lấy được username bot:", error.message);
+    }
+    text = "👥 <b>GIỚI THIỆU BẠN BÈ</b>\nSố lượt giới thiệu được ghi nhận: <b>" +
+      String(Number(user.referralCount) || 0) + "</b>\n";
+    text += referralLink
+      ? "Liên kết giới thiệu của bạn:\n<code>" + htmlEscape(referralLink) + "</code>\n\nChỉ ghi nhận khi người dùng mới mở bot bằng liên kết này và hệ thống lưu được lượt giới thiệu."
+      : "Chưa tạo được liên kết. Hãy kiểm tra BOT_TOKEN và thử lại.";
     keyboard = { inline_keyboard: [
-      [{ text: "KJC", callback_data: "brand_KJC" }, { text: "KJC CŨ", callback_data: "brand_KJC_CU" }],
-      [{ text: "ABCVIP", callback_data: "brand_ABCVIP" }],
-      [{ text: "⬅️ Menu chính", callback_data: "back_start" }],
+      ...(referralLink ? [[{ text: "📤 CHIA SẺ LIÊN KẾT", url: "https://t.me/share/url?url=" + encodeURIComponent(referralLink) }]] : []),
+      [{ text: "⬅️ MENU CHÍNH", callback_data: "back_start" }],
     ] };
-  } else if (data.startsWith("brand_")) {
-    const brand = data.slice(6);
-    if (!BRANDS.includes(brand)) return;
-    const result = await submitToBackend(config, {
-      chatId, userName: user.name, action: "SERVICE_CATALOG_REQUEST", brand, source: "telegram",
-    });
-    text = result.ok
-      ? `✅ Đã chuyển yêu cầu danh mục <b>${htmlEscape(brand)}</b> tới backend.`
-      : `📦 Danh mục <b>${htmlEscape(brand)}</b> đã được chọn. Backend chưa được kết nối; hãy liên hệ quản trị viên để xác nhận sản phẩm và giá.\n\n${htmlEscape(result.reason)}`;
-  } else if (data === "social_service") {
-    text = "🌐 <b>GỬI YÊU CẦU DỊCH VỤ</b>\nChọn nền tảng. Yêu cầu sẽ được gửi cho quản trị viên xem xét; bot không tự tạo lượt xem hoặc xác nhận kết quả.";
+  } else if (data === "menu_vip_center") {
+    text = "👑 <b>TRUNG TÂM VIP</b>\nGửi yêu cầu để xem điều kiện, quyền lợi và phí thành viên. Không có cấp VIP nào được tự động gán khi chưa xác minh.";
+    keyboard = requestKeyboard("VIP_MEMBERSHIP");
+  } else if (data === "menu_giftcode") {
+    await setState(env, chatId, { action: "waiting_giftcode" });
+    text = "🎟️ <b>NHẬP GIFTCODE</b>\nGửi mã giftcode cần kiểm tra. Bot chỉ thông báo thành công khi backend xác minh; hiện tại tin nhắn này chưa làm thay đổi số dư.";
+  } else if (data === "menu_support") {
+    text = "🧑🏻‍💻 <b>LIÊN HỆ CSKH</b>\nGửi nội dung cần hỗ trợ, kèm mã giao dịch nếu có. Tuyệt đối không gửi mật khẩu hoặc mã OTP.";
+    keyboard = requestKeyboard("CUSTOMER_SUPPORT", "📨 GỬI YÊU CẦU CSKH");
+    if (config.supportUrl) {
+      keyboard.inline_keyboard.unshift([{ text: "💬 MỞ KÊNH CSKH", url: config.supportUrl }]);
+    }
+  } else if (data === "menu_group" && config.groupUrl) {
+    text = "👥 <b>NHÓM CHAT</b>\nMở nhóm bằng nút bên dưới.";
     keyboard = { inline_keyboard: [
-      [{ text: "TikTok", callback_data: "service_tiktok" }, { text: "Facebook", callback_data: "service_facebook" }],
-      [{ text: "⬅️ Menu chính", callback_data: "back_start" }],
+      [{ text: "MỞ NHÓM CHAT", url: config.groupUrl }],
+      [{ text: "⬅️ MENU CHÍNH", callback_data: "back_start" }],
     ] };
-  } else if (data === "service_tiktok" || data === "service_facebook") {
-    await setState(env, chatId, {
-      action: "waiting_live_link",
-      platform: data === "service_tiktok" ? "TikTok" : "Facebook",
-    });
-    text = `Hãy gửi link ${data === "service_tiktok" ? "TikTok" : "Facebook"} để chuyển yêu cầu cho quản trị viên. Không gửi mật khẩu hoặc mã đăng nhập.`;
-  } else if (data === "deposit") {
-    text = env.DEPOSIT_INFO
-      ? `💳 <b>HƯỚNG DẪN NẠP TIỀN</b>\n${htmlEscape(env.DEPOSIT_INFO)}\n\nChỉ coi là đã nạp khi quản trị viên xác nhận giao dịch.`
-      : "💳 <b>NẠP TIỀN</b>\nQuản trị viên chưa cấu hình hướng dẫn thanh toán. Vui lòng liên hệ CSKH. Bot không tự xác nhận chuyển khoản.";
-  } else if (data === "cshk_center" || data === "compose_web_tma") {
-    text = "💎 <b>TRUNG TÂM KHÁCH HÀNG</b>";
-    const rows = [];
-    if (config.miniAppUrl) rows.push([{ text: "🚀 Mở Mini App", web_app: { url: config.miniAppUrl } }]);
-    if (config.webAppUrl) rows.push([{ text: "🌐 Mở trang web", url: config.webAppUrl }]);
-    rows.push([{ text: "⬅️ Menu chính", callback_data: "back_start" }]);
-    keyboard = { inline_keyboard: rows };
-    if (rows.length === 1) text += "\nChưa cấu hình URL Mini App hoặc trang web.";
-  } else if (data === "bot_vietsub") {
-    await setState(env, chatId, { action: "waiting_video_link" });
-    text = "🎬 <b>YÊU CẦU VIETSUB</b>\nGửi link video bắt đầu bằng http:// hoặc https://. Backend Vietsub phải được cấu hình trước khi xử lý thực tế.";
   } else if (data === "admin_panel") {
     const users = await listUsers(env);
-    text = `🛠️ <b>BẢNG QUẢN TRỊ</b>\nSố người dùng gần đây: <code>${users.length}</code>`;
+    text = "🛠️ <b>BẢNG QUẢN TRỊ</b>\nNgười dùng trong danh sách gần đây: <code>" + users.length + "</code>";
     keyboard = { inline_keyboard: [
-      [{ text: "👥 Danh sách người dùng", callback_data: "admin_list_users" }],
-      [{ text: "⬅️ Menu chính", callback_data: "back_start" }],
+      [{ text: "👥 DANH SÁCH NGƯỜI DÙNG", callback_data: "admin_list_users" }],
+      [{ text: "⬅️ MENU CHÍNH", callback_data: "back_start" }],
     ] };
   } else if (data === "admin_list_users") {
     const users = await listUsers(env);
     const list = users.length
-      ? users.map((item, index) => `${index + 1}. ${htmlEscape(item.name)} — <code>${htmlEscape(item.id)}</code>`).join("\n")
+      ? users.map((item, index) => (index + 1) + ". " + htmlEscape(item.name) + " — <code>" + htmlEscape(item.id) + "</code>").join("\n")
       : "Chưa có dữ liệu người dùng.";
-    text = `👥 <b>NGƯỜI DÙNG GẦN ĐÂY</b>\n${list}`;
-    keyboard = { inline_keyboard: [[{ text: "◀ Quay lại quản trị", callback_data: "admin_panel" }]] };
+    text = "👥 <b>NGƯỜI DÙNG GẦN ĐÂY</b>\n" + list;
+    keyboard = { inline_keyboard: [[{ text: "◀ QUAY LẠI QUẢN TRỊ", callback_data: "admin_panel" }]] };
   } else {
     return;
   }
@@ -370,7 +560,12 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/" && request.method === "GET") {
-      return json({ service: "Hendy Telegram Bot", status: "ok", endpoints: ["/webhook", "/set-webhook", "/webhook-info"] });
+      return json({
+        service: "Hendy Telegram Bot",
+        status: "ok",
+        product: String(env.BOT_TITLE || "HENDY GAME TOOL BOT"),
+        endpoints: ["/webhook", "/set-webhook", "/webhook-info"],
+      });
     }
 
     if (url.pathname === "/set-webhook") {
@@ -383,25 +578,28 @@ export default {
       if (!/^[A-Za-z0-9_-]{1,256}$/.test(secret)) {
         return json({ error: "WEBHOOK_SECRET_TOKEN must contain only A-Z, a-z, 0-9, underscore or hyphen (1–256 chars)." }, 400);
       }
-      const result = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setWebhook`, {
+      const result = await fetch("https://api.telegram.org/bot" + env.BOT_TOKEN + "/setWebhook", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          url: `${url.origin}/webhook`,
+          url: url.origin + "/webhook",
           secret_token: secret,
           allowed_updates: ["message", "callback_query"],
           drop_pending_updates: false,
         }),
       });
       const payload = await result.json().catch(() => ({}));
-      return json({ ok: Boolean(result.ok && payload.ok), telegram: payload.ok ? payload.result : payload.description || "Telegram API error" }, result.ok && payload.ok ? 200 : 502);
+      return json(
+        { ok: Boolean(result.ok && payload.ok), telegram: payload.ok ? payload.result : payload.description || "Telegram API error" },
+        result.ok && payload.ok ? 200 : 502,
+      );
     }
 
     if (url.pathname === "/webhook-info") {
       if (request.method !== "GET") return json({ error: "Use GET." }, 405);
       if (!authorizedSetup(request, env)) return json({ error: "Unauthorized." }, 401);
       if (!env.BOT_TOKEN) return json({ error: "Missing BOT_TOKEN secret." }, 503);
-      const result = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/getWebhookInfo`);
+      const result = await fetch("https://api.telegram.org/bot" + env.BOT_TOKEN + "/getWebhookInfo");
       const payload = await result.json().catch(() => ({}));
       return json(payload, result.ok ? 200 : 502);
     }

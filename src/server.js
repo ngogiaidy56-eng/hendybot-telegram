@@ -6,6 +6,7 @@ import { WebSocketServer } from "ws";
 import { fileURLToPath } from "node:url";
 import { renderMiniAppHtml } from "./mini-app-html.js";
 import { renderAdminPortalHtml } from "./admin-html.js";
+import { registerWebhookWithRetries } from "./webhook-automation.js";
 import {
   SYSTEM_LOGS,
   ACTIVE_WEBSOCKETS,
@@ -672,14 +673,13 @@ const isDirectExecution = process.argv[1] && fileURLToPath(import.meta.url) === 
 
 if (isDirectExecution) {
   const PORT = Number(process.env.PORT || 3000);
-  const { server } = createServer();
+  const { server, env } = createServer();
 
   server.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 [Express + WS Server] đang chạy trên cổng http://0.0.0.0:${PORT}`);
-    console.log(`📡 Webhook endpoint: http://0.0.0.0:${PORT}/webhook`);
-    console.log(`🛠️ Admin Portal:     http://0.0.0.0:${PORT}/admin`);
-    console.log(`📱 Mini App:         http://0.0.0.0:${PORT}/mini-app`);
-    console.log(`⚡ WebSocket Server: ws://0.0.0.0:${PORT}/ws`);
+    console.log(`[server] Hendy Telegram Bot listening on 0.0.0.0:${PORT}`);
+    console.log("[server] Health check: /healthz | Admin: /admin | Mini App: /mini-app");
+    console.log("[server] Webhook endpoint: POST /webhook");
+    void registerWebhookWithRetries(env, console);
   });
 
   const cleanup = () => {

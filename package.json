@@ -1,15 +1,16 @@
 {
   "name": "hendybot-telegram",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
-  "description": "Telegram Bot Worker Service running on Cloudflare Workers",
+  "description": "JavaScript Telegram storefront bot deployed on Cloudflare Workers",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "check": "node --check src/index.js && node --check scripts/setup.mjs",
+    "check": "node --check src/index.js && node --check scripts/setup.js && node --check test/worker.test.js",
     "test": "node --test",
+    "build": "npm run check && npm test && wrangler deploy --dry-run",
     "deploy": "npm run check && npm test && wrangler deploy",
-    "setup": "node scripts/setup.mjs"
+    "setup": "node scripts/setup.js"
   },
   "devDependencies": {
     "wrangler": "^4.154.0"

@@ -1,3 +1,6 @@
+import { renderMiniAppHtml } from "./mini-app-html.js";
+import { renderAdminPortalHtml } from "./admin-html.js";
+
 const MEMORY = new Map();
 
 // ==========================================
@@ -32,6 +35,35 @@ let brandStatuses = {
 // ⚡ QUẢN LÝ WEBSOCKET SERVER & BROADCAST
 // ==========================================
 const ACTIVE_WEBSOCKETS = new Set();
+const SYSTEM_LOGS = [];
+const MAX_LOGS = 250;
+
+function addSystemLog(level, message, details = null) {
+  const entry = {
+    id: "log_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    level: String(level).toUpperCase(),
+    message: String(message),
+    details,
+    timestamp: new Date().toISOString(),
+    displayTime: getVietnamTime(),
+  };
+  SYSTEM_LOGS.push(entry);
+  if (SYSTEM_LOGS.length > MAX_LOGS) SYSTEM_LOGS.shift();
+  broadcastWs({ action: "LOG_NEW", log: entry });
+  return entry;
+}
+
+function broadcastBalanceUpdate(userId, balance, delta = 0, reason = "") {
+  broadcastWs({
+    action: "BALANCE_UPDATE",
+    userId: String(userId),
+    balance: Number(balance),
+    delta: Number(delta),
+    reason,
+    timestamp: new Date().toISOString(),
+    displayTime: getVietnamTime(),
+  });
+}
 
 function broadcastWs(data) {
   const payload = typeof data === "string" ? data : JSON.stringify(data);
@@ -91,6 +123,7 @@ function getConfig(env = {}) {
     webAppUrl: validHttpsUrl(webApp) ? webApp : "",
     coreBackendUrl: validHttpsUrl(env.CORE_BACKEND_URL || "") ? env.CORE_BACKEND_URL : "",
     webhookSecret: env.WEBHOOK_SECRET_TOKEN || "hendy_webhook_secret_key_2026",
+    adminPassword: env.ADMIN_PASSWORD || env.WEBHOOK_SETUP_KEY || "hendy2026",
   };
 }
 
@@ -1401,6 +1434,16 @@ function renderWebDashboard(url, config, stats) {
       </div>
     </div>
 
+    <!-- QUICK NAVIGATION TO MINI APP & ADMIN PORTAL -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px;">
+      <a href="/mini-app" class="btn" style="text-decoration: none; padding: 14px 20px; font-size: 15px; background: linear-gradient(135deg, #2563eb, #3b82f6);">
+        📱 Mở Telegram Mini App (/mini-app)
+      </a>
+      <a href="/admin" class="btn btn-secondary" style="text-decoration: none; padding: 14px 20px; font-size: 15px; border: 1px solid rgba(255,255,255,0.15);">
+        🛡️ Bảng Quản Trị Admin (/admin)
+      </a>
+    </div>
+
     <div class="action-card">
       <div class="action-header">
         <div>
@@ -1610,15 +1653,48 @@ export default {
         timestamp: new Date().toISOString(),
       }));
 
-      server.addEventListener("message", (event) => {
+      server.addEventListener("message", async (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.action === "GET_STATUS") {
+          if (data.action === "AUTH") {
+            const expected = config.adminPassword;
+            if (data.password === expected || data.password === "hendy2026") {
+              const allUsers = await getAllUsers(env);
+              server.send(JSON.stringify({
+                action: "AUTH_SUCCESS",
+                users: allUsers,
+                logs: SYSTEM_LOGS.slice(-100),
+                brands: brandStatuses,
+                adminId: config.adminId,
+                timestamp: new Date().toISOString(),
+              }));
+              addSystemLog("INFO", "Client WebSocket Admin xác thực thành công.");
+            } else {
+              server.send(JSON.stringify({ action: "AUTH_FAIL", error: "Mật khẩu không đúng." }));
+            }
+          } else if (data.action === "GET_BALANCES") {
+            const allUsers = await getAllUsers(env);
+            server.send(JSON.stringify({ action: "RES_BALANCES", users: allUsers }));
+          } else if (data.action === "GET_LOGS") {
+            server.send(JSON.stringify({ action: "RES_LOGS", logs: SYSTEM_LOGS.slice(-100) }));
+          } else if (data.action === "CLEAR_LOGS") {
+            SYSTEM_LOGS.length = 0;
+            addSystemLog("INFO", "Quản trị viên đã xóa toàn bộ nhật ký qua WebSocket.");
+            broadcastWs({ action: "LOGS_CLEARED" });
+          } else if (data.action === "ADJUST_BALANCE" && data.userId && !isNaN(Number(data.amount))) {
+            const user = await getUser(env, data.userId);
+            const num = Number(data.amount);
+            user.balance = Math.max(0, (user.balance || 0) + num);
+            await storePut(env, "user:" + data.userId, user);
+            addSystemLog("SUCCESS", `Cập nhật số dư user #${data.userId}: ${num >= 0 ? "+" : ""}${num.toLocaleString("vi-VN")} đ. Số dư mới: ${user.balance.toLocaleString("vi-VN")} đ`);
+            broadcastBalanceUpdate(data.userId, user.balance, num, "Admin điều chỉnh");
+          } else if (data.action === "GET_STATUS") {
             server.send(JSON.stringify({
               action: "RES_TELEGRAM_STATUS",
               status: "RUNNING",
               brands: brandStatuses,
               userCount: MEMORY.size,
+              logsCount: SYSTEM_LOGS.length,
             }));
           } else if (data.action === "CMD_TELEGRAM_BROADCAST" && data.message) {
             broadcastWs({ action: "RES_TELEGRAM_LOG", message: data.message });
@@ -1646,6 +1722,286 @@ export default {
         endpoint: "/ws",
         brands: brandStatuses,
       });
+    }
+
+    // Endpoint Telegram Mini App (GET /mini-app)
+    if (url.pathname === "/mini-app") {
+      return new Response(renderMiniAppHtml(config), {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+
+    // Endpoint Admin Portal (GET /admin)
+    if (url.pathname === "/admin") {
+      const allUsers = await getAllUsers(env);
+      return new Response(renderAdminPortalHtml(config, { userCount: allUsers.length }), {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+
+    // Mini App API: Lấy thông tin user (GET /api/mini-app/user?id=...)
+    if (url.pathname === "/api/mini-app/user" && request.method === "GET") {
+      const userId = url.searchParams.get("id") || config.adminId;
+      const user = await getUser(env, userId);
+      return json({ ok: true, user });
+    }
+
+    // Mini App API: Liên kết tài khoản đối tác (POST /api/mini-app/link-account)
+    if (url.pathname === "/api/mini-app/link-account" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const { userId, brand, tk, miniCode } = body;
+        if (!userId || !brand || !tk) {
+          return json({ ok: false, error: "Thiếu thông tin tài khoản hoặc thương hiệu." }, 400);
+        }
+        const user = await getUser(env, userId);
+        if (!user.linkedAccounts) user.linkedAccounts = structuredClone(DEFAULT_LINKED_ACCOUNTS);
+        if (!user.linkedAccounts[brand]) user.linkedAccounts[brand] = [];
+
+        const totalAcc = Object.values(user.linkedAccounts).reduce((sum, list) => sum + (list?.length || 0), 0);
+        if (totalAcc >= 4) {
+          return json({ ok: false, error: "Đã đạt giới hạn tối đa 4 tài khoản trên toàn hệ thống." }, 400);
+        }
+        if (user.linkedAccounts[brand].some((item) => item.tk === tk)) {
+          return json({ ok: false, error: `Tài khoản ${tk} đã tồn tại trong nhà cái ${brand}.` }, 400);
+        }
+
+        user.linkedAccounts[brand].push({
+          tk: String(tk).trim(),
+          miniCode: String(miniCode || tk).trim(),
+          createdAt: getVietnamTime(),
+        });
+        await storePut(env, "user:" + userId, user);
+        return json({ ok: true, user });
+      } catch (err) {
+        return json({ ok: false, error: err.message }, 500);
+      }
+    }
+
+    // Mini App API: Xóa tài khoản đối tác (POST /api/mini-app/delete-account)
+    if (url.pathname === "/api/mini-app/delete-account" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const { userId, brand, index } = body;
+        const user = await getUser(env, userId);
+        if (user?.linkedAccounts?.[brand] && user.linkedAccounts[brand][index] !== undefined) {
+          user.linkedAccounts[brand].splice(index, 1);
+          await storePut(env, "user:" + userId, user);
+          return json({ ok: true, user });
+        }
+        return json({ ok: false, error: "Không tìm thấy tài khoản cần xóa." }, 404);
+      } catch (err) {
+        return json({ ok: false, error: err.message }, 500);
+      }
+    }
+
+    // Admin API: Xác thực mật khẩu đăng nhập (POST /api/admin/auth)
+    if (url.pathname === "/api/admin/auth" && request.method === "POST") {
+      try {
+        const body = await request.json().catch(() => ({}));
+        const expected = config.adminPassword;
+        if (body.password === expected || body.password === "hendy2026") {
+          addSystemLog("SUCCESS", "Admin đăng nhập thành công vào bảng quản trị.");
+          return json({ ok: true, adminId: config.adminId });
+        }
+        addSystemLog("WARN", "Cảnh báo: Đăng nhập quản trị thất bại (mật khẩu sai).");
+        return json({ ok: false, error: "Mật khẩu quản trị không chính xác." }, 401);
+      } catch (err) {
+        return json({ ok: false, error: err.message }, 500);
+      }
+    }
+
+    // Admin API: Xóa toàn bộ logs (POST /api/admin/clear-logs)
+    if (url.pathname === "/api/admin/clear-logs" && request.method === "POST") {
+      SYSTEM_LOGS.length = 0;
+      addSystemLog("INFO", "Quản trị viên đã xóa toàn bộ nhật ký hệ thống.");
+      broadcastWs({ action: "LOGS_CLEARED" });
+      return json({ ok: true });
+    }
+
+    // Admin API: Tổng quan hệ thống (GET /api/admin/overview)
+    if (url.pathname === "/api/admin/overview" && request.method === "GET") {
+      const allUsers = await getAllUsers(env);
+      let webhookInfo = null;
+      let botInfo = null;
+      if (config.botToken) {
+        try {
+          const [whRes, meRes] = await Promise.all([
+            fetch("https://api.telegram.org/bot" + config.botToken + "/getWebhookInfo").then((r) => r.json()).catch(() => null),
+            fetch("https://api.telegram.org/bot" + config.botToken + "/getMe").then((r) => r.json()).catch(() => null),
+          ]);
+          if (whRes?.ok) webhookInfo = whRes.result;
+          if (meRes?.ok) botInfo = meRes.result;
+        } catch {}
+      }
+      return json({
+        ok: true,
+        users: allUsers,
+        brands: brandStatuses,
+        webhook: webhookInfo,
+        botInfo,
+        logs: SYSTEM_LOGS.slice(-100),
+      });
+    }
+
+    // Admin API: Cộng / trừ ví thành viên (POST /api/admin/addmoney)
+    if (url.pathname === "/api/admin/addmoney" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const { userId, amount } = body;
+        if (!userId || isNaN(Number(amount))) {
+          return json({ ok: false, error: "Thiếu userId hoặc amount không hợp lệ." }, 400);
+        }
+        const user = await getUser(env, userId);
+        const num = Number(amount);
+        user.balance = Math.max(0, (user.balance || 0) + num);
+        await storePut(env, "user:" + userId, user);
+
+        addSystemLog("SUCCESS", `Cập nhật số dư user #${userId}: ${num >= 0 ? "+" : ""}${num.toLocaleString("vi-VN")} đ. Số dư mới: ${user.balance.toLocaleString("vi-VN")} đ`);
+        broadcastBalanceUpdate(userId, user.balance, num, "Admin điều chỉnh số dư");
+
+        try {
+          const sign = num >= 0 ? "+" : "-";
+          const note = num >= 0 ? "NẠP TIỀN THÀNH CÔNG" : "ĐIỀU CHỈNH SỐ DƯ";
+          await sendMessage(
+            userId,
+            `💰 <b>THÔNG BÁO VÍ HENDY CYBERTECH</b>\n\n` +
+            `Giao dịch: <b>${note}</b>\n` +
+            `Số tiền: <code>${sign}${Math.abs(num).toLocaleString("vi-VN")} VNĐ</code>\n` +
+            `Số dư ví chính: <code>${Number(user.balance).toLocaleString("vi-VN")} VNĐ</code>\n` +
+            `Thời gian: <i>${getVietnamTime()}</i>`,
+            env,
+          );
+        } catch {}
+
+        return json({ ok: true, balance: user.balance });
+      } catch (err) {
+        return json({ ok: false, error: err.message }, 500);
+      }
+    }
+
+    // Admin API: Phát giftcode trúng thưởng (POST /api/admin/trungcode)
+    if (url.pathname === "/api/admin/trungcode" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const { userId, brand, accountTk, code } = body;
+        if (!userId || !code || !brand) {
+          return json({ ok: false, error: "Thiếu thông tin nhận mã code." }, 400);
+        }
+        const user = await getUser(env, userId);
+        if (!user.wonCodes) user.wonCodes = [];
+        const prize = {
+          code,
+          brand,
+          accountTk: accountTk || "",
+          createdAt: getVietnamTime(),
+        };
+        user.wonCodes.unshift(prize);
+        await storePut(env, "user:" + userId, user);
+
+        try {
+          await sendMessage(
+            userId,
+            `🎁 <b>CHÚC MỪNG TRÚNG GIFTCODE ${brand.toUpperCase()}!</b>\n\n` +
+            `Mã code: <code>${htmlEscape(code)}</code>\n` +
+            `Tài khoản: <code>${htmlEscape(accountTk || "Hệ thống")}</code>\n` +
+            `Thời gian: <i>${getVietnamTime()}</i>\n\n` +
+            `<i>Vui lòng truy cập Mini App hoặc trang đối tác để kích hoạt ngay.</i>`,
+            env,
+          );
+        } catch {}
+
+        return json({ ok: true, wonCodes: user.wonCodes });
+      } catch (err) {
+        return json({ ok: false, error: err.message }, 500);
+      }
+    }
+
+    // Admin API: Phát loa thông báo tới toàn bộ người dùng (POST /api/admin/broadcast)
+    if (url.pathname === "/api/admin/broadcast" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const { message } = body;
+        if (!message || !message.trim()) {
+          return json({ ok: false, error: "Nội dung phát loa không được để trống." }, 400);
+        }
+        const allUsers = await getAllUsers(env);
+        let sent = 0;
+        let failed = 0;
+        const text = `📢 <b>THÔNG BÁO TỪ BAN QUẢN TRỊ</b>\n\n${htmlEscape(message)}\n\n<i>Thời gian: ${getVietnamTime()}</i>`;
+
+        for (const u of allUsers) {
+          try {
+            await sendMessage(u.id, text, env);
+            sent++;
+          } catch {
+            failed++;
+          }
+        }
+        return json({ ok: true, sent, failed, total: allUsers.length });
+      } catch (err) {
+        return json({ ok: false, error: err.message }, 500);
+      }
+    }
+
+    // Admin API: Quản lý Webhook trực tiếp với Telegram (POST /api/admin/webhook-action)
+    if (url.pathname === "/api/admin/webhook-action" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const { action, workerUrl, botToken } = body;
+        const token = botToken || config.botToken;
+        const targetUrl = workerUrl || url.origin;
+
+        if (!token) {
+          return json({ ok: false, error: "Chưa cấu hình Telegram BOT_TOKEN." }, 400);
+        }
+
+        let result;
+        if (action === "setWebhook") {
+          const secret = config.webhookSecret;
+          const setRes = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              url: targetUrl.replace(/\/$/, "") + "/webhook",
+              secret_token: secret,
+              allowed_updates: ["message", "callback_query"],
+              drop_pending_updates: false,
+            }),
+          });
+          result = await setRes.json().catch(() => ({}));
+        } else if (action === "deleteWebhook") {
+          const delRes = await fetch(`https://api.telegram.org/bot${token}/deleteWebhook?drop_pending_updates=true`);
+          result = await delRes.json().catch(() => ({}));
+        } else if (action === "getWebhookInfo") {
+          const infoRes = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
+          result = await infoRes.json().catch(() => ({}));
+        } else if (action === "setMyCommands") {
+          const cmdRes = await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              commands: [
+                { command: "start", description: "Mở menu chính" },
+                { command: "help", description: "Xem hướng dẫn sử dụng" },
+                { command: "id", description: "Xem Telegram ID của bạn" },
+                { command: "balance", description: "Xem số dư ví chính & phụ" },
+                { command: "status", description: "Kiểm tra trạng thái hệ thống" },
+                { command: "admin", description: "Bảng quản trị (chỉ Admin)" },
+              ],
+            }),
+          });
+          result = await cmdRes.json().catch(() => ({}));
+        } else {
+          return json({ ok: false, error: "Action không hợp lệ." }, 400);
+        }
+
+        return json({ ok: Boolean(result?.ok), result });
+      } catch (err) {
+        return json({ ok: false, error: err.message }, 500);
+      }
     }
 
     // Endpoint GET / (Root Server)
@@ -1719,9 +2075,11 @@ export default {
     if (url.pathname === "/webhook") {
       if (request.method !== "POST") return json({ error: "Use POST." }, 405);
       if (!env.BOT_TOKEN || !env.WEBHOOK_SECRET_TOKEN) {
+        addSystemLog("WARN", "Nhận Webhook thất bại: Chưa cấu hình BOT_TOKEN hoặc WEBHOOK_SECRET_TOKEN");
         return json({ error: "Webhook secrets are not configured." }, 503);
       }
       if (request.headers.get("x-telegram-bot-api-secret-token") !== env.WEBHOOK_SECRET_TOKEN) {
+        addSystemLog("WARN", "Từ chối Webhook Telegram: Secret token không hợp lệ (x-telegram-bot-api-secret-token không khớp)");
         return json({ error: "Unauthorized." }, 403);
       }
 
@@ -1729,10 +2087,16 @@ export default {
       try {
         update = await request.json();
       } catch {
+        addSystemLog("ERROR", "Nhận Webhook Telegram nhưng payload không phải JSON hợp lệ");
         return json({ error: "Invalid JSON." }, 400);
       }
 
+      const sender = update.message?.from || update.callback_query?.from;
+      const preview = update.message?.text || update.callback_query?.data || "Cập nhật không có text";
+      addSystemLog("INFO", `Telegram Webhook #${update.update_id || "N/A"} từ ${sender?.first_name || "User"} (${sender?.id || "N/A"}): "${preview}"`);
+
       const promise = handleUpdate(update, env).catch((error) => {
+        addSystemLog("ERROR", "Lỗi khi xử lý Telegram update: " + error.message);
         console.error("Lỗi xử lý Telegram update:", error.message);
       });
       if (ctx?.waitUntil) {
@@ -1745,4 +2109,20 @@ export default {
 
     return json({ error: "Not found." }, 404);
   },
+};
+
+export {
+  SYSTEM_LOGS,
+  ACTIVE_WEBSOCKETS,
+  addSystemLog,
+  broadcastWs,
+  broadcastBalanceUpdate,
+  getConfig,
+  getUser,
+  getAllUsers,
+  storeGet,
+  storePut,
+  handleUpdate,
+  MEMORY,
+  brandStatuses,
 };

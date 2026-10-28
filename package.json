@@ -6,17 +6,23 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --ip 0.0.0.0 --port 3000",
-    "check": "node --check src/index.js && node --check scripts/setup.js && node --check test/worker.test.js",
+    "start": "node src/server.js",
+    "check": "node --check src/index.js && node --check src/server.js && node --check src/mini-app-html.js && node --check src/admin-html.js && node --check scripts/setup.js && node --check scripts/deploy-and-activate.js && node --check test/worker.test.js",
     "test": "node --test",
     "build": "wrangler deploy --dry-run",
     "deploy": "npm run check && npm test && npm run build && wrangler deploy",
     "setup": "node scripts/setup.js",
-    "auto-setup": "node scripts/setup.js"
+    "auto-setup": "node scripts/setup.js",
+    "deploy-live": "node scripts/deploy-and-activate.js"
   },
   "devDependencies": {
     "wrangler": "^4.154.0"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^5.3.0",
+    "ws": "^8.22.0"
   }
 }

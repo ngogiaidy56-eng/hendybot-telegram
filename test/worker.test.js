@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.js";
+import { createServer } from "../src/server.js";
+import { WebSocket } from "ws";
 
 const ctx = { waitUntil() {} };
 
@@ -350,5 +352,322 @@ test("websocket endpoint /ws responds with server status", async () => {
   assert.ok(data.brands);
   assert.ok(data.brands.SC88);
 });
+
+test("mini-app endpoint /mini-app serves interactive Telegram WebApp HTML", async () => {
+  const response = await worker.fetch(
+    new Request("https://example.workers.dev/mini-app"),
+    { BOT_TITLE: "HENDY CYBERTECH PRO" },
+    ctx,
+  );
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /text\/html/);
+  const html = await response.text();
+  assert.match(html, /telegram-web-app\.js/);
+  assert.match(html, /HENDY CYBERTECH PRO/);
+  assert.match(html, /accounts-list/);
+});
+
+test("admin portal endpoint /admin serves admin dashboard HTML", async () => {
+  const response = await worker.fetch(
+    new Request("https://example.workers.dev/admin"),
+    { BOT_TITLE: "HENDY CYBERTECH PRO", ADMIN_ID: "8639286417" },
+    ctx,
+  );
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /text\/html/);
+  const html = await response.text();
+  assert.match(html, /Bảng Quản Trị Hệ Thống/);
+  assert.match(html, /metric-users/);
+  assert.match(html, /webhook-res-box/);
+});
+
+test("mini-app user and account management APIs", async () => {
+  const env = { ADMIN_ID: "998877" };
+
+  // 1. Get user
+  const userRes = await worker.fetch(
+    new Request("https://example.workers.dev/api/mini-app/user?id=998877"),
+    env,
+    ctx,
+  );
+  assert.equal(userRes.status, 200);
+  const userData = await userRes.json();
+  assert.equal(userData.ok, true);
+  assert.equal(userData.user.id, "998877");
+
+  // 2. Link account
+  const linkRes = await worker.fetch(
+    new Request("https://example.workers.dev/api/mini-app/link-account", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        userId: "998877",
+        brand: "SC88",
+        tk: "player_pro_99",
+        mk: "secretpass123",
+        miniCode: "CODE88",
+      }),
+    }),
+    env,
+    ctx,
+  );
+  assert.equal(linkRes.status, 200);
+  const linkData = await linkRes.json();
+  assert.equal(linkData.ok, true);
+  const sc88Accs = linkData.user.linkedAccounts.SC88;
+  assert.equal(sc88Accs.length, 1);
+  assert.equal(sc88Accs[0].tk, "player_pro_99");
+  assert.equal(sc88Accs[0].miniCode, "CODE88");
+  // Ensure no password leak in stored accounts
+  assert.equal(sc88Accs[0].mk, undefined);
+
+  // 3. Delete account
+  const delRes = await worker.fetch(
+    new Request("https://example.workers.dev/api/mini-app/delete-account", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        userId: "998877",
+        brand: "SC88",
+        index: 0,
+      }),
+    }),
+    env,
+    ctx,
+  );
+  assert.equal(delRes.status, 200);
+  const delData = await delRes.json();
+  assert.equal(delData.ok, true);
+  assert.equal(delData.user.linkedAccounts.SC88.length, 0);
+});
+
+test("admin API endpoints addmoney, trungcode, and overview", async () => {
+  const env = { BOT_TOKEN: "mock:token", ADMIN_ID: "8639286417" };
+
+  // Overview
+  const ovRes = await worker.fetch(
+    new Request("https://example.workers.dev/api/admin/overview"),
+    env,
+    ctx,
+  );
+  assert.equal(ovRes.status, 200);
+  const ovData = await ovRes.json();
+  assert.equal(ovData.ok, true);
+  assert.ok(Array.isArray(ovData.users));
+  assert.ok(ovData.brands);
+
+  // Add money
+  const addRes = await worker.fetch(
+    new Request("https://example.workers.dev/api/admin/addmoney", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        userId: "998877",
+        amount: 100000,
+        adminId: "8639286417",
+      }),
+    }),
+    env,
+    ctx,
+  );
+  assert.equal(addRes.status, 200);
+  const addData = await addRes.json();
+  assert.equal(addData.ok, true);
+  assert.ok(addData.balance >= 100000);
+
+  // Trung code
+  const codeRes = await worker.fetch(
+    new Request("https://example.workers.dev/api/admin/trungcode", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        userId: "998877",
+        brand: "SC88",
+        accountTk: "player_pro_99",
+        code: "HENDY_LUCKY_2026",
+        adminId: "8639286417",
+      }),
+    }),
+    env,
+    ctx,
+  );
+  assert.equal(codeRes.status, 200);
+  const codeData = await codeRes.json();
+  assert.equal(codeData.ok, true);
+  assert.ok(codeData.wonCodes.length >= 1);
+  assert.equal(codeData.wonCodes[0].code, "HENDY_LUCKY_2026");
+});
+
+test("admin password auth endpoint validates correctly and protects admin area", async () => {
+  const env = { ADMIN_PASSWORD: "super_secret_admin_pass", ADMIN_ID: "8639286417" };
+
+  // 1. Wrong password
+  const failRes = await worker.fetch(
+    new Request("https://example.workers.dev/api/admin/auth", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: "wrong_password_123" }),
+    }),
+    env,
+    ctx,
+  );
+  assert.equal(failRes.status, 401);
+  const failData = await failRes.json();
+  assert.equal(failData.ok, false);
+
+  // 2. Correct password
+  const successRes = await worker.fetch(
+    new Request("https://example.workers.dev/api/admin/auth", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: "super_secret_admin_pass" }),
+    }),
+    env,
+    ctx,
+  );
+  assert.equal(successRes.status, 200);
+  const successData = await successRes.json();
+  assert.equal(successData.ok, true);
+  assert.equal(successData.adminId, "8639286417");
+});
+
+test("admin HTML template includes password login screen and WebSocket real-time logic", async () => {
+  const env = { BOT_TITLE: "HENDY CYBERTECH PRO", ADMIN_ID: "8639286417" };
+  const res = await worker.fetch(
+    new Request("https://example.workers.dev/admin"),
+    env,
+    ctx,
+  );
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /login-screen/);
+  assert.match(html, /admin-password-input/);
+  assert.match(html, /admin-dashboard/);
+  assert.match(html, /initWebSocket/);
+  assert.match(html, /BALANCE_UPDATE/);
+  assert.match(html, /LOG_NEW/);
+  assert.match(html, /clearSystemLogs/);
+});
+
+test("admin clear-logs API and system logs ring buffer", async () => {
+  const env = { ADMIN_ID: "8639286417" };
+  const clearRes = await worker.fetch(
+    new Request("https://example.workers.dev/api/admin/clear-logs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }),
+    env,
+    ctx,
+  );
+  assert.equal(clearRes.status, 200);
+  const data = await clearRes.json();
+  assert.equal(data.ok, true);
+});
+
+test("express server handles secure webhook and WebSocket real-time balance streaming", async (t) => {
+  const env = {
+    BOT_TOKEN: "9287501728:mock_token_12345",
+    WEBHOOK_SECRET_TOKEN: "hendy_secret_token_express_2026",
+    ADMIN_PASSWORD: "test_express_pass",
+    ADMIN_ID: "8639286417",
+  };
+
+  const { server, app } = createServer(env);
+
+  // Start Express server on a free port
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const port = address.port;
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const wsUrl = `ws://127.0.0.1:${port}/ws`;
+
+  t.after(() => {
+    server.close();
+  });
+
+  // 1. Webhook endpoint rejects missing / invalid secret header
+  const rejectedRes = await fetch(`${baseUrl}/webhook`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ update_id: 1 }),
+  });
+  assert.equal(rejectedRes.status, 403);
+
+  // 2. Webhook endpoint accepts valid secret token
+  const acceptedRes = await fetch(`${baseUrl}/webhook`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "hendy_secret_token_express_2026",
+    },
+    body: JSON.stringify({
+      update_id: 55501,
+      message: {
+        message_id: 10,
+        chat: { id: 8639286417 },
+        from: { id: 8639286417, first_name: "Admin" },
+        text: "/status",
+      },
+    }),
+  });
+  assert.equal(acceptedRes.status, 200);
+  assert.equal(await acceptedRes.text(), "OK");
+
+  // 3. Admin Auth via Express API
+  const authRes = await fetch(`${baseUrl}/api/admin/auth`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ password: "test_express_pass" }),
+  });
+  assert.equal(authRes.status, 200);
+  const authJson = await authRes.json();
+  assert.equal(authJson.ok, true);
+
+  // 4. WebSocket Client Connection & Real-Time Balance Stream
+  const clientWs = new WebSocket(wsUrl);
+  await new Promise((resolve, reject) => {
+    clientWs.on("open", resolve);
+    clientWs.on("error", reject);
+  });
+
+  const receivedMessages = [];
+  clientWs.on("message", (msg) => {
+    try {
+      receivedMessages.push(JSON.parse(msg.toString()));
+    } catch {}
+  });
+
+  // Authenticate over WebSocket
+  clientWs.send(JSON.stringify({ action: "AUTH", password: "test_express_pass" }));
+
+  // Wait a short tick for AUTH_SUCCESS
+  await new Promise((r) => setTimeout(r, 100));
+  const authMsg = receivedMessages.find((m) => m.action === "AUTH_SUCCESS");
+  assert.ok(authMsg, "Should receive AUTH_SUCCESS via WebSocket");
+
+  // Adjust balance via admin API and verify real-time WebSocket broadcast
+  await fetch(`${baseUrl}/api/admin/addmoney`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ userId: "8639286417", amount: 75000 }),
+  });
+
+  await new Promise((r) => setTimeout(r, 100));
+  const balanceMsg = receivedMessages.find(
+    (m) => m.action === "BALANCE_UPDATE" && m.userId === "8639286417",
+  );
+  assert.ok(balanceMsg, "Should receive real-time BALANCE_UPDATE over WebSocket");
+  assert.equal(balanceMsg.delta, 75000);
+
+  // Clear logs over WebSocket
+  clientWs.send(JSON.stringify({ action: "CLEAR_LOGS" }));
+  await new Promise((r) => setTimeout(r, 100));
+  const clearMsg = receivedMessages.find((m) => m.action === "LOGS_CLEARED");
+  assert.ok(clearMsg, "Should receive LOGS_CLEARED over WebSocket");
+
+  clientWs.close();
+});
+
 
 

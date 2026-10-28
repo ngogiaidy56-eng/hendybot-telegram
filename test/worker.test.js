@@ -200,10 +200,14 @@ test("auto-setup endpoint registers webhook and commands", async (t) => {
   });
 
   const response = await worker.fetch(
-    new Request("https://hendybot.workers.dev/auto-setup", { method: "POST" }),
+    new Request("https://hendybot.workers.dev/auto-setup", {
+      method: "POST",
+      headers: { "x-setup-key": "setup-auto-test" },
+    }),
     {
       BOT_TOKEN: "123456:placeholder-token",
       WEBHOOK_SECRET_TOKEN: "auto-secret-token",
+      WEBHOOK_SETUP_KEY: "setup-auto-test",
     },
     ctx,
   );

@@ -6,7 +6,7 @@ const MEMORY = new Map();
 // ==========================================
 // ⚙️ CẤU HÌNH HỆ THỐNG & ENVIRONMENT VARIABLES
 // ==========================================
-const DEFAULT_BOT_TOKEN = "9287501728:AAGQH1sIVKVZWr0yqNVfsU3jT9tYTqoMAKg";
+// Secrets must be supplied by the runtime; never embed bot credentials in source.
 const DEFAULT_ADMIN_ID = "8639286417";
 const DEFAULT_CHANNEL_ID = "-100xxxxxxxxx";
 
@@ -110,7 +110,7 @@ function validHttpsUrl(value) {
 function getConfig(env = {}) {
   const webApp = env.WEB_APP_URL || env.MINI_APP_URL || "https://ngogiaidy56-eng.github.io/BOT-TELE";
   return {
-    botToken: env.BOT_TOKEN || DEFAULT_BOT_TOKEN,
+    botToken: env.BOT_TOKEN || "",
     adminId: String(env.ADMIN_ID || DEFAULT_ADMIN_ID),
     channelId: String(env.CHANNEL_ID || DEFAULT_CHANNEL_ID),
     wsPort: Number(env.WS_PORT || env.PORT || 3000),
@@ -122,8 +122,8 @@ function getConfig(env = {}) {
     miniAppUrl: env.MINI_APP_URL || "https://ngogiaidy56-eng.github.io/BOT-TELE",
     webAppUrl: validHttpsUrl(webApp) ? webApp : "",
     coreBackendUrl: validHttpsUrl(env.CORE_BACKEND_URL || "") ? env.CORE_BACKEND_URL : "",
-    webhookSecret: env.WEBHOOK_SECRET_TOKEN || "hendy_webhook_secret_key_2026",
-    adminPassword: env.ADMIN_PASSWORD || env.WEBHOOK_SETUP_KEY || "hendy2026",
+    webhookSecret: env.WEBHOOK_SECRET_TOKEN || "",
+    adminPassword: env.ADMIN_PASSWORD || env.WEBHOOK_SETUP_KEY || "",
   };
 }
 
@@ -1160,26 +1160,44 @@ function authorizedSetup(request, env) {
 async function registerWebhookAuto(origin, env) {
   const config = getConfig(env);
   if (!config.botToken) {
-    return { ok: false, error: "BOT_TOKEN chưa được cung cấp." };
+    return { ok: false, error: "BOT_TOKEN chưa được cấu hình trong Secrets." };
+  }
+  if (!env.WEBHOOK_SECRET_TOKEN || !/^[A-Za-z0-9_-]{1,256}$/.test(env.WEBHOOK_SECRET_TOKEN)) {
+    return { ok: false, error: "WEBHOOK_SECRET_TOKEN thiếu hoặc không đúng định dạng." };
   }
 
-  const webhookUrl = origin + "/webhook";
-  const secret = config.webhookSecret;
+  let base;
+  try {
+    base = new URL(origin);
+  } catch {
+    return { ok: false, error: "Origin webhook không hợp lệ." };
+  }
+  if (base.protocol !== "https:" || !base.hostname ||
+      base.hostname === "localhost" || base.hostname.endsWith(".localhost") ||
+      base.hostname.endsWith(".local") || base.username || base.password) {
+    return { ok: false, error: "Webhook yêu cầu hostname công khai HTTPS hợp lệ." };
+  }
 
-  // 1. Đăng ký webhook
+  const webhookUrl = new URL("/webhook", base.origin).toString();
   const setRes = await fetch("https://api.telegram.org/bot" + config.botToken + "/setWebhook", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       url: webhookUrl,
-      secret_token: secret,
+      secret_token: env.WEBHOOK_SECRET_TOKEN,
       allowed_updates: ["message", "callback_query"],
       drop_pending_updates: false,
     }),
   });
   const setResult = await setRes.json().catch(() => ({}));
+  if (!setRes.ok || !setResult.ok) {
+    return {
+      ok: false,
+      webhookUrl,
+      error: setResult.description || "Telegram không chấp nhận webhook.",
+    };
+  }
 
-  // 2. Đăng ký menu lệnh Telegram
   const cmdRes = await fetch("https://api.telegram.org/bot" + config.botToken + "/setMyCommands", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1195,17 +1213,15 @@ async function registerWebhookAuto(origin, env) {
     }),
   });
   const cmdResult = await cmdRes.json().catch(() => ({}));
-
-  // 3. Lấy thông tin bot
   const meRes = await fetch("https://api.telegram.org/bot" + config.botToken + "/getMe");
   const meResult = await meRes.json().catch(() => ({}));
 
   return {
-    ok: Boolean(setRes.ok && setResult.ok),
+    ok: true,
     webhookUrl,
-    telegram: setResult.result || setResult.description,
-    commandsConfigured: Boolean(cmdResult.ok),
-    botInfo: meResult.result || null,
+    telegram: setResult.result || "Webhook đã đăng ký.",
+    commandsConfigured: Boolean(cmdRes.ok && cmdResult.ok),
+    botInfo: meResult.ok ? meResult.result : null,
   };
 }
 
@@ -2027,8 +2043,13 @@ export default {
       });
     }
 
-    // Endpoint Tự Động Đăng Ký Webhook: GET hoặc POST /auto-setup
+    // Endpoint setup phải POST + secret key; không bao giờ tự đăng ký qua GET công khai.
     if (url.pathname === "/auto-setup") {
+      if (request.method !== "POST") return json({ ok: false, error: "Use POST." }, 405);
+      if (!authorizedSetup(request, env)) return json({ ok: false, error: "Unauthorized." }, 401);
+      if (!env.BOT_TOKEN || !env.WEBHOOK_SECRET_TOKEN) {
+        return json({ ok: false, error: "Missing BOT_TOKEN or WEBHOOK_SECRET_TOKEN secret." }, 503);
+      }
       const result = await registerWebhookAuto(url.origin, env);
       return json(result, result.ok ? 200 : 502);
     }

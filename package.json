@@ -6,9 +6,10 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "check": "node --check src/index.js",
+    "check": "node --check src/index.js && node --check scripts/setup.mjs",
     "test": "node --test",
-    "deploy": "npm run check && npm test && wrangler deploy"
+    "deploy": "npm run check && npm test && wrangler deploy",
+    "setup": "node scripts/setup.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.154.0"

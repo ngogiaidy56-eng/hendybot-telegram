@@ -319,7 +319,7 @@ async function handleMessage(message, env) {
     if (!config.adminId || chatId !== config.adminId) {
       return sendMessage(chatId, "Bạn không có quyền quản trị.", env);
     }
-    return sendMessage(chatId, "🛠️ <b>BẢNG QUẢN TRỊ</b>\\nChọn tác vụ quản lý.", env, {
+    return sendMessage(chatId, "🛠️ <b>BẢNG QUẢN TRỊ</b>\nChọn tác vụ quản lý.", env, {
       inline_keyboard: [
         [{ text: "👥 DANH SÁCH NGƯỜI DÙNG", callback_data: "admin_list_users" }],
         [{ text: "⬅️ MENU CHÍNH", callback_data: "back_start" }],

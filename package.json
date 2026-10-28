@@ -8,8 +8,8 @@
     "dev": "wrangler dev",
     "check": "node --check src/index.js && node --check scripts/setup.js && node --check test/worker.test.js",
     "test": "node --test",
-    "build": "npm run check && npm test && wrangler deploy --dry-run",
-    "deploy": "npm run check && npm test && wrangler deploy",
+    "build": "wrangler deploy --dry-run",
+    "deploy": "npm run check && npm test && npm run build && wrangler deploy",
     "setup": "node scripts/setup.js"
   },
   "devDependencies": {

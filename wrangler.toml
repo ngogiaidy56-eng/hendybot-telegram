@@ -4,9 +4,16 @@ compatibility_date = "2026-10-28"
 
 [vars]
 ADMIN_ID = "8639286417"
+BOT_TITLE = "HENDY GAME TOOL BOT"
 MINI_APP_URL = "https://ngogiaidy56-eng.github.io/BOT-TELE"
 
-# Configure secrets with:
+# Optional public HTTPS URLs. Configure these to your own pages/groups.
+# SITE_URL = "https://your-domain.example"
+# GROUP_URL = "https://t.me/your_support_group"
+# CHANNEL_URL = "https://t.me/your_announcements_channel"
+# SUPPORT_URL = "https://t.me/your_support_account"
+#
+# Configure secrets (never commit them):
 # npx wrangler secret put BOT_TOKEN
 # npx wrangler secret put WEBHOOK_SECRET_TOKEN
 # npx wrangler secret put WEBHOOK_SETUP_KEY

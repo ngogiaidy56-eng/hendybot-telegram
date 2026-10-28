@@ -1,0 +1,8 @@
+{
+  "name": "hendybot-telegram",
+  "description": "JavaScript Telegram storefront bot deployed on Cloudflare Workers",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -5,7 +5,7 @@
   "description": "JavaScript Telegram storefront bot deployed on Cloudflare Workers",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "wrangler dev --ip 0.0.0.0 --port 3000",
     "check": "node --check src/index.js && node --check scripts/setup.js && node --check test/worker.test.js",
     "test": "node --test",
     "build": "wrangler deploy --dry-run",

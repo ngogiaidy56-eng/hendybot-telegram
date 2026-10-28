@@ -257,8 +257,14 @@ async function handleCallback(query, env) {
   const chatId = String(query.message?.chat?.id || senderId);
   const messageId = query.message?.message_id;
   const data = String(query.data || "");
-  const user = await getUser(env, chatId, query.from);
 
+  if ((data === "admin_panel" || data === "admin_list_users") &&
+      (!config.adminId || senderId !== config.adminId)) {
+    return answerCallback(query.id, "Bạn không có quyền quản trị.", env, true)
+      .catch((error) => console.error("Không trả lời được callback quản trị:", error.message));
+  }
+
+  const user = await getUser(env, chatId, query.from);
   await answerCallback(query.id, "", env).catch((error) => {
     console.error("Không trả lời được callback:", error.message);
   });
@@ -317,9 +323,6 @@ async function handleCallback(query, env) {
     await setState(env, chatId, { action: "waiting_video_link" });
     text = "🎬 <b>YÊU CẦU VIETSUB</b>\nGửi link video bắt đầu bằng http:// hoặc https://. Backend Vietsub phải được cấu hình trước khi xử lý thực tế.";
   } else if (data === "admin_panel") {
-    if (!config.adminId || senderId !== config.adminId) {
-      return answerCallback(query.id, "Bạn không có quyền quản trị.", env, true);
-    }
     const users = await listUsers(env);
     text = `🛠️ <b>BẢNG QUẢN TRỊ</b>\nSố người dùng gần đây: <code>${users.length}</code>`;
     keyboard = { inline_keyboard: [
@@ -327,9 +330,6 @@ async function handleCallback(query, env) {
       [{ text: "⬅️ Menu chính", callback_data: "back_start" }],
     ] };
   } else if (data === "admin_list_users") {
-    if (!config.adminId || senderId !== config.adminId) {
-      return answerCallback(query.id, "Bạn không có quyền quản trị.", env, true);
-    }
     const users = await listUsers(env);
     const list = users.length
       ? users.map((item, index) => `${index + 1}. ${htmlEscape(item.name)} — <code>${htmlEscape(item.id)}</code>`).join("\n")

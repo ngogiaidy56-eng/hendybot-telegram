@@ -1,5 +1,6 @@
 name = "hendybot-telegram"
 main = "src/index.js"
+workers_dev = true
 compatibility_date = "2026-10-28"
 
 [vars]

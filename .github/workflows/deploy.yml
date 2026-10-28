@@ -1,4 +1,4 @@
-name: Test, deploy and activate Hendy Telegram Bot
+name: Test source and set up Hendy Telegram Bot
 
 on:
   push:
@@ -40,7 +40,7 @@ jobs:
         run: npm run build
 
   deploy-and-activate:
-    name: Configure secrets, deploy Worker and activate webhook
+    name: Configure secrets and activate webhook after Worker deploy
     runs-on: ubuntu-latest
     needs: test
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -81,5 +81,5 @@ jobs:
       - name: Verify Cloudflare authentication
         run: npx wrangler whoami
 
-      - name: Generate secrets, deploy Worker and activate webhook
+      - name: Generate secrets and activate webhook
         run: npm run setup
